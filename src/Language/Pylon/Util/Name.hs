@@ -1,4 +1,5 @@
 {-# LANGUAGE MultiParamTypeClasses, FunctionalDependencies #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving, FlexibleInstances #-}
 module Language.Pylon.Util.Name where
 --------------------------------------------------------------------------------
 
@@ -11,3 +12,5 @@ class Monad m => MonadName n m | m -> n where
 
 freshNames :: MonadName n m => Int -> m [n]
 freshNames n = replicateM n freshName
+
+--------------------------------------------------------------------------------

@@ -3,29 +3,41 @@ module Language.Pylon.Core.Eval where
 --------------------------------------------------------------------------------
 
 import Language.Pylon.Core.AST
+import Control.Arrow
+
+--------------------------------------------------------------------------------
+-- Substitution
+--------------------------------------------------------------------------------
+
+subst :: Ident -> Exp -> Exp -> Exp
+subst i s ee = case ee of
+  EVar j            -> if i == j then s else EVar j
+  EConst c          -> EConst c
+  EApp g y          -> EApp (r g) (r y)
+  ELam (j, t) e     -> ELam (j, r t) (r e)
+  EPi (j, t) e      -> EPi (j, r t) (r e)
+  ELet es e         -> ELet (fmap (\(j, x, t) -> (j, r x, r t)) es) (r e)
+  ECase bs (j, d) e -> ECase (fmap (second r) bs) (j, r d) (r e)
+  where r = subst i s
 
 --------------------------------------------------------------------------------
 -- Head Normal Form
 --------------------------------------------------------------------------------
 
-apply :: Exp -> Exp -> Exp
-apply f x = go 0 f where
-  go i (ELocal j)        = if i == j then x else ELocal j
-  go i (EConst c)        = EConst c
-  go i (EApp g y)        = EApp (go i g) $ go i y
-  go i (ELam t e)        = ELam (go i t) $ go (i + 1) e
-  go i (ELet es e)       = ELet (fmap (goLet j) es) (go j e) where j = i + length es
-  go i (ECase bs d e)    = ECase (fmap (goBind i) bs) (go (i + 1) d) (go i e)
-  goLet i (e, t)         = (go i e, go i t)
-  goBind i (PCon c n, e) = (PCon c n, go (i + n) e)
-
 nf :: Exp -> Exp
 nf ee = spine ee [] where
-  spine (EApp f x) as     = spine f (x:as)
-  spine (ELam t e) []     = ELam (nf t) (nf e)
-  spine (ELam _ e) (a:as) = spine (apply e a) as
-  spine e          as     = app e as
-  app   e          as     = foldl EApp e $ fmap nf as
+  spine (EApp f x)      as     = spine f (x:as)
+  spine (ELam (i, t) e) []     = ELam (i, nf t) (nf e)
+  spine (ELam (i, _) e) (a:as) = spine (subst i a e) as
+  spine e               as     = foldl EApp e $ fmap nf as
 
-betaEq :: Exp -> Exp -> Bool
-betaEq x y = nf x == nf y
+-- todo: implement
+whnf :: Exp -> Exp
+whnf = nf
+
+--------------------------------------------------------------------------------
+-- Alpha Equivalence
+--------------------------------------------------------------------------------
+
+alphaEq :: Exp -> Exp -> Bool
+alphaEq x y = error "todo"

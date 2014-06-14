@@ -40,7 +40,7 @@ instance MonadName [Char] Codegen where
   freshName = do
     n <- gets cgNames
     modify $ \s -> s { cgNames = n + 1 }
-    return $ "stg_" ++ show n
+    return $ "_stg_" ++ show n
 
 -------------------------------------------------------------------------------
 

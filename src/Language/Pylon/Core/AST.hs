@@ -13,7 +13,9 @@
 module Language.Pylon.Core.AST where
 --------------------------------------------------------------------------------
 
-import Data.Map (Map)
+import Data.Map      (Map)
+import Data.String   (IsString, fromString)
+import Data.Function (on)
 
 --------------------------------------------------------------------------------
 -- Top Level
@@ -23,8 +25,8 @@ type Name = String
 
 -- | Pylon Core program. Consists of expression bindings and data constructors.
 data Program = Program
-  { prData :: Map Name Con
-  , prBind :: Map Name Bind
+  { prData :: Map String Con
+  , prBind :: Map String Bind
   } deriving (Eq, Show)
 
 -- | Data constructor.
@@ -53,18 +55,18 @@ data Bind = Bind
 data Exp
   = EConst Const
   | EApp   Exp   Exp
-  | ELam   Type  Exp
-  | EPi    Type  Exp
-  | ELet   [(Exp, Type)] Exp
-  | ECase  [(Pat, Exp)] Exp Exp
-  | ELocal Int
+  | ELam   (Ident, Type)  Exp
+  | EPi    (Ident, Type)  Exp
+  | ELet   [(Ident, Exp, Type)] Exp
+  | ECase  [(Pat, Exp)] (Ident, Exp) Exp
+  | EVar   Ident
   deriving (Eq, Show)
 
 -- | Types are expressions.
 type Type = Exp
 
 -- | Pattern for case expressions. May only be algebraic.
-data Pat = PCon Name Int deriving (Eq, Show)
+data Pat = PCon Name [Ident] deriving (Eq, Show)
 
 -- | Constant value.
 data Const
@@ -76,6 +78,25 @@ data Const
 
 -- | Literal value.
 data Lit = LInt Integer deriving (Eq, Show)
+
+--------------------------------------------------------------------------------
+-- Identifier
+--------------------------------------------------------------------------------
+
+-- | Identifier. May contain a unique index.
+data Ident = Ident
+  { iName   :: String
+  , iUnique :: Int
+  } deriving (Show)
+
+instance Eq Ident where
+  (==) = (==) `on` iUnique
+
+instance Ord Ident where
+  compare = compare `on` iUnique
+
+instance IsString Ident where
+  fromString s = Ident s (-1)
 
 --------------------------------------------------------------------------------
 -- Helper Functions

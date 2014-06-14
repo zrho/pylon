@@ -21,11 +21,13 @@ import           Language.Pylon.Core.AST
 import qualified Language.Pylon.STG.AST  as STG
 
 import Control.Monad              (replicateM)
+import Control.Monad.Error.Class  (MonadError, throwError)
 import Control.Monad.State.Class  (MonadState, modify, gets)
 import Control.Monad.Trans.State  (StateT, runStateT)
 import Control.Monad.Trans.Class  (lift)
 import Control.Applicative hiding (Const)
 
+import           Data.Foldable (toList)
 import qualified Data.Map as M
 
 --------------------------------------------------------------------------------
@@ -33,22 +35,21 @@ import qualified Data.Map as M
 --------------------------------------------------------------------------------
 
 newtype Trans a = Trans { fromTrans :: StateT TransState (Either String) a }
-  deriving (Functor, Applicative, Monad, MonadState TransState)
+  deriving (Functor, Applicative, Monad, MonadState TransState, MonadError String)
 
 data TransState = TransState
   { tsProgram :: Program
   , tsNames   :: Int
-  , tsLocals  :: [STG.Var]
   } deriving (Eq, Show)
 
 instance MonadName [Char] Trans where
   freshName = do
     n <- gets tsNames
     modify $ \s -> s { tsNames = n + 1 }
-    return $ '_' : show n
+    return $ "_g" ++ show n
 
 runTrans :: Trans a -> Program -> Either String a
-runTrans go p = fmap fst $ runStateT (fromTrans go) $ TransState p 0 []
+runTrans go p = fmap fst $ runStateT (fromTrans go) $ TransState p 0
 
 -- | Looks up a constructor in the program.
 lookupCon :: Name -> Trans Con
@@ -56,30 +57,28 @@ lookupCon name = do
   dat <- gets $ prData . tsProgram
   case M.lookup name dat of
     Just c  -> return c
-    Nothing -> failTrans $ "No such constructor: " ++ name
-
--- | Fails the translation with an error message.
-failTrans :: String -> Trans a
-failTrans = Trans . lift . Left
+    Nothing -> throwError $ "No such constructor: " ++ name
 
 --------------------------------------------------------------------------------
--- Locals
+-- Programs
 --------------------------------------------------------------------------------
 
-withLocals :: [STG.Var] -> Trans a -> Trans a
-withLocals vs go = do
-  ws <- gets tsLocals
-  modify $ \s -> s { tsLocals = reverse vs ++ ws }
-  x <- go
-  modify $ \s -> s { tsLocals = ws }
-  return x
+genProgram :: Trans STG.Program
+genProgram = do
+  p  <- gets tsProgram
+  mapM genBind $ M.toList $ prBind p
 
-getLocal :: Int -> Trans STG.Var
-getLocal i = do
-  vs <- gets tsLocals
-  case safeIndex vs i of
-    Just v  -> return v
-    Nothing -> failTrans $ "Local out of bounds: " ++ show i
+-- | STG code for an expression binding.
+-- |
+-- | Creates a function object for lambda expressions and a thunk otherwise.
+genBind :: (Name, Bind) -> Trans STG.Bind
+genBind (name, Bind ee _) = go ee 0 where
+  go (ELam _ e) n = go e (n + 1)
+  go e          0 = (STG.Bind name . STG.Thunk) <$> genExp e
+  go e          n = do
+    vs <- freshNames n
+    et <- genExp e
+    return $ STG.Bind name $ STG.Fun vs et
 
 --------------------------------------------------------------------------------
 -- Expressions
@@ -90,13 +89,13 @@ getLocal i = do
 -- | Since no type level code is translated to STG, pi expressions have no
 -- | STG translation.
 genExp :: Exp -> Trans STG.Exp
-genExp (EConst c )    = genConst c
-genExp (EPi _ _  )    = failTrans "Can not translate pi expressions to STG."
-genExp (ELet bs e)    = genLet bs e
-genExp (ECase as d e) = genCase as d e
-genExp (ELocal i)     = genLocal i
-genExp (EApp f x)     = genApp f [x]
-genExp (ELam _ e)     = genLam 1 e
+genExp (EConst c )     = genConst c
+genExp (EPi _ _  )     = throwError "Can not translate pi expressions to STG."
+genExp (ELet bs e)     = genLet bs e
+genExp (ECase as d e)  = genCase as d e
+genExp (EVar i)        = genVar i
+genExp (EApp f x)      = genApp f [x]
+genExp (ELam (i, _) e) = genLam [i] e
 
 --------------------------------------------------------------------------------
 -- Constants and Literals
@@ -112,7 +111,7 @@ genExp (ELam _ e)     = genLam 1 e
 genConst :: Const -> Trans STG.Exp
 genConst (CLit l)    = return $ STG.EAtom $ STG.ALit $ toLit l
 genConst c@(CCon _)  = genApp (EConst c) []
-genConst CUniv       = failTrans "Can not translate universes."
+genConst CUniv       = throwError "Can not translate universes."
 genConst (CGlobal n) = return $ toVar n
 
 toLit :: Lit -> STG.Lit
@@ -181,24 +180,25 @@ genAppCon cn xs = do
 -- Variables
 --------------------------------------------------------------------------------
 
-genLocal :: Int -> Trans STG.Exp
-genLocal = fmap toVar . getLocal
+genVar :: Ident -> Trans STG.Exp
+genVar  = return . toVar . toName
 
 -- | Lifts a variable name into a STG expression.
 toVar :: Name -> STG.Exp
 toVar = STG.EAtom . STG.AVar
+
+toName :: Ident -> Name
+toName (Ident _ i) = "_u" ++ show i
 
 --------------------------------------------------------------------------------
 -- Let and Lambda Bindings
 --------------------------------------------------------------------------------
 
 -- | STG code for let bindings.
-genLet :: [(Exp, Type)] -> Exp -> Trans STG.Exp
+genLet :: [(Ident, Exp, Type)] -> Exp -> Trans STG.Exp
 genLet ds e = do
-  let es = fmap fst ds
-  vs <- freshNames $ length es
-  bs <- withLocals vs $ mapM toBind $ zip vs es
-  et <- withLocals vs $ genExp e
+  bs <- mapM toBind $ fmap (\(i, e, _) -> (toName i, e)) ds
+  et <- genExp e
   return $ STG.ELet bs et
 
 -- | STG code for lambdas. Since lambdas are heap objects, a STG let binding
@@ -206,13 +206,12 @@ genLet ds e = do
 -- |
 -- | Nested lambdas are collected into a lambda with multiple arguments for
 -- | more efficient STG code.
-genLam :: Int -> Exp -> Trans STG.Exp
-genLam n (ELam _ e) = genLam (n + 1) e
-genLam n e          = do
+genLam :: [Ident] -> Exp -> Trans STG.Exp
+genLam is (ELam (i, _) e) = genLam (is ++ [i]) e
+genLam is e               = do
   fn <- freshName
-  vs <- freshNames n
-  et <- withLocals vs $ genExp e
-  let b = STG.Bind fn $ STG.Fun vs et
+  et <- genExp e
+  let b = STG.Bind fn $ STG.Fun (fmap toName is) et
   return $ STG.ELet [b] $ STG.EAtom $ STG.AVar fn
 
 -- | Creates bindings for expressions. Lazyness is achieved by
@@ -226,19 +225,17 @@ toBind (n,e) = (STG.Bind n . STG.Thunk) <$> genExp e
 
 -- | STG code for case expressions.
 -- | Note that all case expressions in Pylon Core are algebraic.
-genCase :: [(Pat, Exp)] -> Exp -> Exp -> Trans STG.Exp
-genCase as de e = do
+genCase :: [(Pat, Exp)] -> (Ident, Exp) -> Exp -> Trans STG.Exp
+genCase as (di, de) e = do
   et <- genExp e
   at <- mapM toAAlt as
-  dn <- freshName
-  dt <- withLocals [dn] $ genExp de
-  let def = STG.Default (Just dn) dt
+  dt <- genExp de
+  let def = STG.Default (Just $ toName di) dt
   return $ STG.ECase (STG.AAlts at def) et
 
 -- | STG algebraic alternatives.
 toAAlt :: (Pat, Exp) -> Trans STG.AAlt
-toAAlt (PCon c n, e) = do
-  vs <- freshNames n
-  et <- withLocals vs $ genExp e
+toAAlt (PCon c vs, e) = do
+  et <- genExp e
   ct <- fmap conIndex $ lookupCon c
-  return $ STG.AAlt ct vs et
+  return $ STG.AAlt ct (fmap toName vs) et
