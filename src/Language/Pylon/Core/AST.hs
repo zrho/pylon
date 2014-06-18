@@ -10,12 +10,17 @@
 -- Pylon Core language: Minimal dependently typed language with algebraic
 -- data types.
 --------------------------------------------------------------------------------
+{-# LANGUAGE PatternSynonyms, MultiParamTypeClasses #-}
+{-# LANGUAGE DeriveFunctor, DeriveFoldable, DeriveTraversable #-}
 module Language.Pylon.Core.AST where
 --------------------------------------------------------------------------------
 
-import Data.Map      (Map)
-import Data.String   (IsString, fromString)
-import Data.Function (on)
+import Language.Pylon.Util.Fold
+import Data.Map                 (Map)
+import Data.String              (IsString, fromString)
+import Data.Function            (on)
+import Data.Foldable            (Foldable)
+import Data.Traversable         (Traversable)
 
 --------------------------------------------------------------------------------
 -- Top Level
@@ -48,19 +53,43 @@ data Bind = Bind
   } deriving (Eq, Show)
 
 --------------------------------------------------------------------------------
--- Expression Level
+-- Expressions
 --------------------------------------------------------------------------------
 
 -- | Type and value level expressions.
-data Exp
-  = EConst Const
-  | EApp   Exp   Exp
-  | ELam   (Ident, Type)  Exp
-  | EPi    (Ident, Type)  Exp
-  | ELet   [(Ident, Exp, Type)] Exp
-  | ECase  [(Pat, Exp)] (Ident, Exp) Exp
-  | EVar   Ident
-  deriving (Eq, Show)
+data ExpF e
+  = FConst Const
+  | FApp   e e
+  | FLam   (Ident, e)  e
+  | FPi    (Ident, e)  e
+  | FLet   [(Ident, e, e)] e
+  | FCase  [(Pat, e)] (Ident, e) e
+  | FVar   Ident
+  deriving (Eq, Show, Functor, Foldable, Traversable)
+
+newtype Exp = Exp { fromExp :: ExpF Exp }
+
+instance Fixpoint ExpF Exp where
+  inF  = Exp
+  outF = fromExp
+
+instance Show Exp where
+  show = show . fromExp
+
+instance Eq Exp where
+  (==) = (==) `on` fromExp
+
+pattern EConst a    = Exp (FConst a)
+pattern EApp a b    = Exp (FApp a b)
+pattern ELam a b    = Exp (FLam a b)
+pattern EPi a b     = Exp (FPi a b)
+pattern ELet a b    = Exp (FLet a b)
+pattern ECase a b c = Exp (FCase a b c)
+pattern EVar a      = Exp (FVar a)
+
+--------------------------------------------------------------------------------
+-- Misc
+--------------------------------------------------------------------------------
 
 -- | Types are expressions.
 type Type = Exp

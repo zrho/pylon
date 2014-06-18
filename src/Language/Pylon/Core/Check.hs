@@ -1,4 +1,5 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving, MultiParamTypeClasses #-}
+{-# LANGUAGE PatternSynonyms #-}
 --------------------------------------------------------------------------------
 module Language.Pylon.Core.Check where
 --------------------------------------------------------------------------------
@@ -136,4 +137,4 @@ litType (LInt _) = EConst $ CGlobal "Pylon.Prim.Int"
 
 ensureEq :: (Eq a, Show a) => a -> a -> String -> Check ()
 ensureEq ex ac msg = unless (ex == ac) $ throwError $ unlines
-  [ msg, "Expected: " ++ show ex, "Actual: " ++ show ac]
+  [ msg, "Expected: " ++ show ex, "Actual: " ++ show ac ]

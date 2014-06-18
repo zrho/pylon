@@ -12,6 +12,7 @@
 {-# LANGUAGE FlexibleInstances, MultiParamTypeClasses #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE TupleSections #-}
+{-# LANGUAGE PatternSynonyms #-}
 module Language.Pylon.Core.STG where
 --------------------------------------------------------------------------------
 
