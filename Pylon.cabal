@@ -23,6 +23,7 @@ library
                       Language.Pylon.Codegen.Monad
   other-modules:      Language.Pylon.Util.Name,
                       Language.Pylon.Util.Fold,
+                      Language.Pylon.Util.Subst,
                       Language.Pylon.Util
   other-extensions:   OverloadedStrings,
                       FlexibleInstances,

@@ -5,6 +5,7 @@ module Language.Pylon.Util where
 
 import Prelude             hiding (mapM_)
 import Control.Monad.Writer.Class (MonadWriter, tell)
+import Control.Monad.Error.Class  (MonadError, throwError)
 import Data.Foldable              (Foldable, mapM_)
 
 --------------------------------------------------------------------------------
@@ -14,6 +15,9 @@ tells = mapM_ tell
 
 line :: (MonadWriter String m, Foldable t) => t String -> m ()
 line ts = tells ts >> tell "\n"
+
+liftEither :: MonadError e m => Either e a -> m a
+liftEither = either throwError return
 
 --------------------------------------------------------------------------------
 

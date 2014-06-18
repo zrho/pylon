@@ -5,24 +5,27 @@ module Language.Pylon.Core.Check where
 --------------------------------------------------------------------------------
 
 import Language.Pylon.Util
+import Language.Pylon.Util.Subst
 import Language.Pylon.Core.AST
 import Language.Pylon.Core.Eval
 
+import Control.Arrow              
 import Control.Monad              (unless)
-import Control.Monad.Error.Class  (MonadError, throwError)
+import Control.Monad.Error.Class  (MonadError, throwError, catchError)
 import Control.Monad.State.Class  (MonadState, gets, modify)
 import Control.Monad.Trans.State  (StateT, runStateT)
 import Control.Applicative hiding (Const)
 
-import           Data.Foldable (toList)
+import           Data.Foldable (toList, forM_)
 import           Data.Map      (Map)
 import qualified Data.Map as M
 import           Data.Monoid   ((<>))
+import           Data.Maybe    (fromMaybe)
 
 import Debug.Trace
 
-traceM :: (Monad m) => String -> m ()
-traceM msg = traceShow msg $ return ()
+--traceM :: (Monad m) => String -> m ()
+--traceM msg = traceShow msg $ return ()
 
 --------------------------------------------------------------------------------
 
@@ -54,6 +57,14 @@ lookupLocal i = do
     Just v  -> return v
     Nothing -> throwError $ "Unknown local variable: " ++ show i
 
+substLocals :: Subst Ident Exp -> Check a -> Check a
+substLocals u go = do
+  vs <- gets csLocals
+  modify $ \s -> s { csLocals = fmap (subst u) vs }
+  x <- go
+  modify $ \s -> s { csLocals = vs }
+  return x
+
 lookupCon :: Name -> Check Con
 lookupCon name = gets (prData . csProgram) >>= \d -> case M.lookup name d of
   Just con -> return con
@@ -75,6 +86,8 @@ tcBind :: (Name, Bind) -> Check ()
 tcBind (name, Bind e t) = do
   et <- tcExp e
   ensureEq (nf t) (nf et) $ "Type mismatch in binding: " ++ name
+  --traceM $ show (nf t, nf et, fromSubst u)
+  return ()
 
 --------------------------------------------------------------------------------
 
@@ -102,8 +115,8 @@ tcApp :: Exp -> Exp -> Check Type
 tcApp f x = tcExpNF f >>= \ft -> case ft of
   EPi (i, tx) rt -> do
     xt <- tcExpNF x
-    ensureEq (nf tx) xt "Bad argument type."
-    return $ subst i xt rt
+    ensureEq (nf tx) xt $ "Bad argument type in " ++ show (EApp f x)
+    return $ subst (singletonSubst i x) rt
   _ -> throwError "Application to non-function."
 
 tcLam :: Ident -> Type -> Exp -> Check Type
@@ -122,7 +135,41 @@ tcLet :: [(Ident, Exp, Type)] -> Exp -> Check Type
 tcLet bs e = error "todo"
 
 tcCase :: [(Pat, Exp)] -> (Ident, Exp) -> Exp -> Check Type
-tcCase as d e = error "todo"
+tcCase as (di, de) e = do
+  et <- tcExp e
+  dt <- fmap nf $ withLocals [(di, et)] $ tcExp de
+  forM_ as $ \(PCon c vs, a) -> do
+    con <- lookupCon c
+    let (tc, vst) = apply (conType con) $ fmap EVar vs
+    let ws = zip vs vst
+    u <- liftEither $ runUnify $ unify tc et
+    at <- withLocals ws $ substLocals u $ do
+      ls <- gets csLocals
+      tcExp $ subst u a
+    ensureEq (subst u dt) (nf at) $ "Case alternatives with different result types."
+  return dt
+
+{-
+Id   :: (a : Type) -> (b : Type) -> (x : a) -> (x : b) -> Type
+Refl :: (a : Type) -> (x : a) -> Id a a x x
+
+p    :: Id Int b 5 y
+
+(a : Type) -> (x : a) -> Id a a x x ~ (c : ct) -> (z : zt) -> Id Int b 5 y
+
+c  <- Int
+ct <- Type
+z  <- 5
+a  <- Int
+b  <- Int
+x  <- 5
+y  <- 5
+
+Id c c z z ~ Id Int b 5 y
+
+case p of
+  Refl c z -> z
+-}
 
 tcVar :: Ident -> Check Type
 tcVar = lookupLocal
@@ -135,6 +182,9 @@ litType (LInt _) = EConst $ CGlobal "Pylon.Prim.Int"
 
 --------------------------------------------------------------------------------
 
-ensureEq :: (Eq a, Show a) => a -> a -> String -> Check ()
-ensureEq ex ac msg = unless (ex == ac) $ throwError $ unlines
-  [ msg, "Expected: " ++ show ex, "Actual: " ++ show ac ]
+ensureEq :: Exp -> Exp -> String -> Check ()
+ensureEq ex ac msg = case alphaEq ex ac of
+  Right _ -> return ()
+  Left e  -> throwError $ unlines
+    [ msg, "Expected: " ++ show ex, "Actual: " ++ show ac
+    , "Unifier message: " ++ show e ]

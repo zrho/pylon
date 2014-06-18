@@ -16,6 +16,8 @@ module Language.Pylon.Core.AST where
 --------------------------------------------------------------------------------
 
 import Language.Pylon.Util.Fold
+import Language.Pylon.Util.Subst
+import Data.Maybe               (fromMaybe)
 import Data.Map                 (Map)
 import Data.String              (IsString, fromString)
 import Data.Function            (on)
@@ -73,11 +75,22 @@ instance Fixpoint ExpF Exp where
   inF  = Exp
   outF = fromExp
 
+-- todo: prettier
 instance Show Exp where
-  show = show . fromExp
+  show (EVar i)        = show i
+  show (EConst c)      = show c
+  show (EApp f x)      = concat ["(", show f, " ", show x, ")"]
+  show (ELam (i, t) e) = concat ["\\(", show i, ": ", show t, ") -> ", show e]
+  show (EPi (i, t) e)  = concat ["(", show i, ": ", show t, ") -> ", show e]
+  show e               = "(" ++ show (fromExp e) ++ ")"
 
 instance Eq Exp where
   (==) = (==) `on` fromExp
+
+instance Substitutable Ident Exp where
+  subst s = cata alg where
+    alg (FVar j) = fromMaybe (EVar j) $ substVar j s
+    alg f        = inF f
 
 pattern EConst a    = Exp (FConst a)
 pattern EApp a b    = Exp (FApp a b)
@@ -116,7 +129,10 @@ data Lit = LInt Integer deriving (Eq, Show)
 data Ident = Ident
   { iName   :: String
   , iUnique :: Int
-  } deriving (Show)
+  }
+
+instance Show Ident where
+  show (Ident n u) = n ++ "{" ++ show u ++ "}"
 
 instance Eq Ident where
   (==) = (==) `on` iUnique
@@ -139,3 +155,14 @@ conArity = typeArity . conType
 typeArity :: Exp -> Int
 typeArity (EPi _ e) = 1 + typeArity e
 typeArity _         = 0
+
+funResult :: Type -> Type
+funResult (EPi _ e) = funResult e
+funResult e         = e
+
+funArgs :: Type -> [Type]
+funArgs (EPi (_, t) e) = funArgs e ++ [t]
+funArgs e              = []
+
+patVars :: Pat -> [Ident]
+patVars (PCon _ vs) = vs
