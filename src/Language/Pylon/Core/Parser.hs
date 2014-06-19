@@ -78,16 +78,16 @@ caseP = do
   s <- expP
   T.symbol "of"
   (as, d) <- T.braces $ semiSepEndBy caseAltP caseDefP
-  return $ ECase as d s
+  return $ ECase (AAlts as) d s
   <?> "case expression"
 
-caseAltP :: Parser (Pat, Exp)
+caseAltP :: Parser (AAlt Exp)
 caseAltP = do
   c  <- T.ident conStyle
   vs <- many (T.ident varStyle) 
   T.symbol "=>"
   e <- expP
-  return (PCon c vs, e)
+  return $ AAlt c vs e 
   <?> "case alternative"
 
 caseDefP :: Parser (Ident, Exp)
@@ -174,7 +174,7 @@ bindDeclP = do
   T.symbol "="
   e    <- expP
   T.semi
-  return (name, Bind e ty)
+  return (name, BindExp e ty)
   <?> "binding"
 
 --------------------------------------------------------------------------------

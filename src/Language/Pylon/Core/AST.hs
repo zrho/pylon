@@ -12,6 +12,7 @@
 --------------------------------------------------------------------------------
 {-# LANGUAGE PatternSynonyms, MultiParamTypeClasses #-}
 {-# LANGUAGE DeriveFunctor, DeriveFoldable, DeriveTraversable #-}
+{-# LANGUAGE MagicHash #-}
 module Language.Pylon.Core.AST where
 --------------------------------------------------------------------------------
 
@@ -49,10 +50,10 @@ data Con = Con
   } deriving (Eq, Show)
 
 -- | Function binding: An expression and its type.
-data Bind = Bind
-  { bndExp  :: Exp 
-  , bndType :: Exp
-  } deriving (Eq, Show)
+data Bind
+  = BindExp     { bndExp     :: Exp , bndType :: Exp }
+  | BindForeign { bndForeign :: Name, bndType :: Exp }
+    deriving (Eq, Show)
 
 --------------------------------------------------------------------------------
 -- Expressions
@@ -65,8 +66,9 @@ data ExpF e
   | FLam   (Ident, e)  e
   | FPi    (Ident, e)  e
   | FLet   [(Ident, e, e)] e
-  | FCase  [(Pat, e)] (Ident, e) e
+  | FCase  (Alts e) (Ident, e) e
   | FVar   Ident
+  | FPrim  Prim PrimOp [e]
   deriving (Eq, Show, Functor, Foldable, Traversable)
 
 newtype Exp = Exp { fromExp :: ExpF Exp }
@@ -99,27 +101,60 @@ pattern EPi a b     = Exp (FPi a b)
 pattern ELet a b    = Exp (FLet a b)
 pattern ECase a b c = Exp (FCase a b c)
 pattern EVar a      = Exp (FVar a)
+pattern EPrim a b c = Exp (FPrim a b c)
+
+-- | Types are expressions.
+type Type = Exp
 
 --------------------------------------------------------------------------------
 -- Misc
 --------------------------------------------------------------------------------
 
--- | Types are expressions.
-type Type = Exp
+-- [(Pat, e)]
 
--- | Pattern for case expressions. May only be algebraic.
-data Pat = PCon Name [Ident] deriving (Eq, Show)
+data Alts e
+  = AAlts [AAlt e]
+  | PAlts [PAlt e]
+  deriving (Eq, Show, Functor, Foldable, Traversable)
+
+data AAlt e = AAlt Name [Ident] e
+  deriving (Eq, Show, Functor, Foldable, Traversable)
+
+data PAlt e = PAlt Lit e
+  deriving (Eq, Show, Functor, Foldable, Traversable)
 
 -- | Constant value.
 data Const
-  = CLit    Lit
-  | CCon    Name
-  | CGlobal Name
+  = CLit      Lit
+  | CCon      Name
+  | CGlobal   Name
+  | CPrim     Prim
+  | CPrimUniv
   | CUniv
   deriving (Eq, Show)
 
+--------------------------------------------------------------------------------
+-- Primitives and Literals
+--------------------------------------------------------------------------------
+
 -- | Literal value.
 data Lit = LInt Integer deriving (Eq, Show)
+
+-- | Primitive value.
+data Prim = PInt deriving (Eq, Show)
+
+-- | Primitive operation.
+data PrimOp
+  = PPlus
+  | PMult
+  | PDiv
+  | PMinus
+  | PEq
+  | PLt
+  | PLte
+  | PGt
+  | PGte
+  deriving (Eq, Show, Ord, Enum, Bounded)
 
 --------------------------------------------------------------------------------
 -- Identifier
@@ -163,6 +198,3 @@ funResult e         = e
 funArgs :: Type -> [Type]
 funArgs (EPi (_, t) e) = funArgs e ++ [t]
 funArgs e              = []
-
-patVars :: Pat -> [Ident]
-patVars (PCon _ vs) = vs

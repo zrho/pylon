@@ -21,7 +21,7 @@ import           Language.Pylon.Util.Name
 import           Language.Pylon.Core.AST
 import qualified Language.Pylon.STG.AST  as STG
 
-import Control.Monad              (replicateM)
+import Control.Monad              (replicateM, forM)
 import Control.Monad.Error.Class  (MonadError, throwError)
 import Control.Monad.State.Class  (MonadState, modify, gets)
 import Control.Monad.Trans.State  (StateT, runStateT)
@@ -73,7 +73,7 @@ genProgram = do
 -- |
 -- | Creates a function object for lambda expressions and a thunk otherwise.
 genBind :: (Name, Bind) -> Trans STG.Bind
-genBind (name, Bind ee _) = go ee [] where
+genBind (name, BindExp ee _) = go ee [] where
   go (ELam (v, _) e) vs = go e (vs ++ [v])
   go e               [] = (STG.Bind name . STG.Thunk) <$> genExp e
   go e               vs = do
@@ -96,6 +96,7 @@ genExp (ECase as d e)  = genCase as d e
 genExp (EVar i)        = genVar i
 genExp (EApp f x)      = genApp f [x]
 genExp (ELam (i, _) e) = genLam [i] e
+genExp (EPrim p po xs) = genPrim p po xs
 
 --------------------------------------------------------------------------------
 -- Constants and Literals
@@ -224,18 +225,39 @@ toBind (n,e) = (STG.Bind n . STG.Thunk) <$> genExp e
 --------------------------------------------------------------------------------
 
 -- | STG code for case expressions.
--- | Note that all case expressions in Pylon Core are algebraic.
-genCase :: [(Pat, Exp)] -> (Ident, Exp) -> Exp -> Trans STG.Exp
+genCase :: Alts Exp -> (Ident, Exp) -> Exp -> Trans STG.Exp
 genCase as (di, de) e = do
   et <- genExp e
-  at <- mapM toAAlt as
+  at <- genAlts as
   dt <- genExp de
   let def = STG.Default (Just $ toName di) dt
-  return $ STG.ECase (STG.AAlts at def) et
+  return $ STG.ECase at def et
 
--- | STG algebraic alternatives.
-toAAlt :: (Pat, Exp) -> Trans STG.AAlt
-toAAlt (PCon c vs, e) = do
+genAlts :: Alts Exp -> Trans STG.Alts
+genAlts (AAlts as) = fmap STG.AAlts $ forM as $ \(AAlt c vs e) -> do
   et <- genExp e
   ct <- fmap conIndex $ lookupCon c
   return $ STG.AAlt ct (fmap toName vs) et
+genAlts (PAlts as) = fmap STG.PAlts $ forM as $ \(PAlt l e) -> 
+  STG.PAlt (toLit l) <$> genExp e
+
+--------------------------------------------------------------------------------
+-- Primitives
+--------------------------------------------------------------------------------
+
+genPrim :: Prim -> PrimOp -> [Exp] -> Trans STG.Exp
+genPrim p po xs = STG.EPrim (toPrim p) (toPrimOp po) <$> mapM genExp xs
+
+toPrimOp :: PrimOp -> STG.PrimOp
+toPrimOp PPlus  = STG.PPlus
+toPrimOp PMult  = STG.PMult
+toPrimOp PDiv   = STG.PDiv
+toPrimOp PMinus = STG.PMinus
+toPrimOp PEq    = STG.PEq
+toPrimOp PLt    = STG.PLt
+toPrimOp PLte   = STG.PLte
+toPrimOp PGt    = STG.PGt
+toPrimOp PGte   = STG.PGte
+
+toPrim :: Prim -> STG.Prim
+toPrim PInt = STG.PInt

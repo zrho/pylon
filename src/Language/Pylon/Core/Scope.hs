@@ -66,7 +66,8 @@ scopeProgram (Program cs bs) = Program
   <*> mapM scopeBind bs
 
 scopeBind :: Bind -> Scope Bind
-scopeBind (Bind e t) = Bind <$> scopeExp e <*> scopeExp t
+scopeBind (BindExp e t) = BindExp <$> scopeExp e <*> scopeExp t
+scopeBind (BindForeign f t) = BindForeign f <$> scopeExp t
 
 scopeCon :: Con -> Scope Con
 scopeCon (Con i t) = Con i <$> scopeExp t
@@ -108,15 +109,20 @@ scopeLet bs e = do
       return (i, e', t')
     ELet bs' <$> scopeExp e
 
-scopeCase :: [(Pat, Exp)] -> (Ident, Exp) -> Exp -> Scope Exp
-scopeCase ps (di, de) e = do
+scopeCase :: Alts Exp -> (Ident, Exp) -> Exp -> Scope Exp
+scopeCase as (di, de) e = do
   di'   <- allocScope $ iName di
   de'   <- withScope [di] $ scopeExp de
-  ps'   <- forM ps $ \(PCon con vs, pe) -> do
-    ws  <- mapM (allocScope . iName) vs
-    pe' <- withScope ws $ scopeExp pe
-    return (PCon con ws, pe')
-  ECase ps' (di', de') <$> scopeExp e
+  as'   <- scopeAlts as
+  ECase as' (di', de') <$> scopeExp e
+
+scopeAlts :: Alts Exp -> Scope (Alts Exp)
+scopeAlts (AAlts as) = fmap AAlts $ forM as $ \(AAlt con vs e) -> do
+  ws  <- mapM (allocScope . iName) vs
+  e' <- withScope ws $ scopeExp e
+  return (AAlt con ws e')
+scopeAlts (PAlts as) = fmap PAlts $ forM as $ \(PAlt l e) -> 
+  PAlt l <$> scopeExp e
 
 scopeConst :: Const -> Scope Exp
 scopeConst = return . EConst

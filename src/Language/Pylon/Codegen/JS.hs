@@ -31,11 +31,11 @@ mkProgram p = do
 -- | Code for a STG expression; binds the value of the expression to a fresh
 -- | name and returns that name.
 mkExp :: Exp -> Codegen Name
-mkExp (EApp v as)  = mkEApp v as
-mkExp (EPrim p as) = mkEPrim p as
-mkExp (ECase as e) = mkECase as e
-mkExp (EAtom a)    = mkEAtom a
-mkExp (ELet bs e)  = mkELet bs e
+mkExp (EApp v as)     = mkEApp v as
+mkExp (EPrim p po as) = mkEPrim p po as
+mkExp (ECase as d e)  = mkECase as d e
+mkExp (EAtom a)       = mkEAtom a
+mkExp (ELet bs e)     = mkELet bs e
 
 -------------------------------------------------------------------------------
 -- Case Expressions
@@ -50,13 +50,13 @@ mkExp (ELet bs e)  = mkELet bs e
 -- | When no alternative but the default one is provided, the switch will be
 -- | omitted, since it is not legal javascript to define a switch with only
 -- | a default alternative.
-mkECase :: Alts -> Exp -> Codegen Name
-mkECase (AAlts [] (Default dv de)) scr = do
+mkECase :: Alts -> Default -> Exp -> Codegen Name
+mkECase (AAlts []) (Default dv de) scr = do
   scrE <- mkExp scr
   [qq|stg.force({scrE});{endl}|]
   forM_ dv $ \v -> [qq|var {v} = {scrE};{endl}|]
   mkExp de
-mkECase (AAlts as def) scr = withTemp $ \result -> do
+mkECase (AAlts as) def scr = withTemp $ \result -> do
   scrE <- mkExp scr
   [qq|stg.force({scrE});{endl}|]
   [qq|var {result};{endl}|]
@@ -75,11 +75,11 @@ mkECase (AAlts as def) scr = withTemp $ \result -> do
     -- default alternative
     mkDefault scrE result def
   [qq|}{endl}|]
-mkECase (PAlts [] (Default dv de)) scr = do
+mkECase (PAlts []) (Default dv de) scr = do
   scrE <- mkExp scr
   forM_ dv $ \v -> [qq|var {v} = {scrE};{endl}|]
   mkExp de
-mkECase (PAlts as def) scr = withTemp $ \result -> do
+mkECase (PAlts as) def scr = withTemp $ \result -> do
   scrE <- mkExp scr
   [qq|var {result};{endl}|]
   [qq|switch ({scrE}) \{{endl}|]
@@ -118,13 +118,14 @@ mkEApp v as = withTemp $ \result -> do
 
 -- | Code for primitive application: The arguments are intercalated by the
 -- | primitive operator.
-mkEPrim :: Prim -> [Atom] -> Codegen Name
-mkEPrim p as = withTemp $ \result -> do
-  let ops = intercalate (mkPrim p) $ fmap mkAtom as
+mkEPrim :: Prim -> PrimOp -> [Exp] -> Codegen Name
+mkEPrim p po as = withTemp $ \result -> do
+  vs <- mapM mkExp as
+  let ops = intercalate (mkPrim po) vs
   [qq|var $result = $ops;{endl}|]
 
 -- | Primitive operators.
-mkPrim :: Prim -> String
+mkPrim :: PrimOp -> String
 mkPrim PPlus      = "+"
 mkPrim PMult      = "*"
 mkPrim PDiv       = "/"
@@ -134,7 +135,6 @@ mkPrim PLt        = "<"
 mkPrim PLte       = "<="
 mkPrim PGt        = ">"
 mkPrim PGte       = ">="
-mkPrim PIntToBool = "||"
 
 ----------------------------------------------------------------------------
 -- Let Expressions and Bindings

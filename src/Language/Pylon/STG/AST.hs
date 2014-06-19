@@ -20,10 +20,10 @@ type Program = [Bind]
 
 -- | Expressions.
 data Exp
-  = ELet    [Bind] Exp        -- ^ Local definition
-  | ECase   Alts   Exp        -- ^ Case expression
-  | EApp    Var    [Atom]     -- ^ Application
-  | EPrim   Prim   [Atom]     -- ^ Saturated build-in op
+  = ELet    [Bind] Exp          -- ^ Local definition
+  | ECase   Alts Default Exp    -- ^ Case expression
+  | EApp    Var         [Atom]  -- ^ Application
+  | EPrim   Prim PrimOp [Exp]   -- ^ Saturated build-in op
   | EAtom   Atom
   deriving (Eq, Show)
 
@@ -55,8 +55,12 @@ data Lit
   = LInt Integer
   deriving (Eq, Show)
 
+-- | Primitive type.
+data Prim = PInt
+  deriving (Eq, Show, Ord, Bounded, Enum)
+
 -- | Primitive operations.
-data Prim
+data PrimOp
   = PPlus
   | PMult
   | PDiv
@@ -66,7 +70,6 @@ data Prim
   | PLte
   | PGt
   | PGte
-  | PIntToBool
   deriving (Eq, Show, Ord, Bounded, Enum)
 
 --------------------------------------------------------------------------------
@@ -89,8 +92,8 @@ data Object
 
 -- | List of alternatives.
 data Alts
-  = AAlts [AAlt] Default
-  | PAlts [PAlt] Default
+  = AAlts [AAlt]
+  | PAlts [PAlt]
   deriving (Eq, Show)
 
 -- | Algebraic alternative.

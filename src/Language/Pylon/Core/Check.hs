@@ -10,7 +10,7 @@ import Language.Pylon.Core.AST
 import Language.Pylon.Core.Eval
 
 import Control.Arrow              
-import Control.Monad              (unless)
+import Control.Monad              (unless, void)
 import Control.Monad.Error.Class  (MonadError, throwError, catchError)
 import Control.Monad.State.Class  (MonadState, gets, modify)
 import Control.Monad.Trans.State  (StateT, runStateT)
@@ -35,7 +35,7 @@ data CheckState = CheckState
   } deriving (Eq, Show)
 
 runCheck :: Check a -> Program -> Either String a
-runCheck go p = fmap fst $ runStateT (fromCheck go) (CheckState M.empty p S.empty)
+runCheck go p = fmap fst $ runStateT (fromCheck go) (CheckState M.empty p)
 
 --------------------------------------------------------------------------------
 
@@ -83,10 +83,10 @@ tcProgram = do
   mapM_ tcBind $ M.toList $ prBind p
 
 tcBind :: (Name, Bind) -> Check ()
-tcBind (name, Bind e t) = do
+tcBind (name, BindExp e t) = do
   et <- tcExp e
   ensureEq (nf t) (nf et) $ "Type mismatch in binding: " ++ name
-  return ()
+tcBind (name, BindForeign f t) = void $ tcExp t
 
 --------------------------------------------------------------------------------
 
@@ -98,6 +98,7 @@ tcExp (EPi (i, t) e ) = tcPi i t e
 tcExp (ELet bs e)     = tcLet bs e 
 tcExp (ECase as d e)  = tcCase as d e
 tcExp (EVar i)        = tcVar i
+tcExp (EPrim p po xs) = tcPrim p po xs
 
 tcExpNF :: Exp -> Check Type
 tcExpNF = fmap nf . tcExp
@@ -109,6 +110,8 @@ tcConst (CLit    lit ) = return $ litType lit
 tcConst (CCon    name) = conType <$> lookupCon name
 tcConst (CGlobal name) = bndType <$> lookupBind name
 tcConst CUniv          = return $ EConst CUniv
+tcConst CPrimUniv      = return $ EConst CUniv
+tcConst (CPrim p     ) = return $ EConst CPrimUniv
 
 tcApp :: Exp -> Exp -> Check Type
 tcApp f x = tcExpNF f >>= \ft -> case ft of
@@ -135,11 +138,11 @@ tcLet bs e = do
     forM_ bs $ \(_, x, t) -> tcExp x
     tcExp e
 
-tcCase :: [(Pat, Exp)] -> (Ident, Exp) -> Exp -> Check Type
-tcCase as (di, de) e = do
+tcCase :: Alts Exp -> (Ident, Exp) -> Exp -> Check Type
+tcCase (AAlts as) (di, de) e = do
   et <- tcExp e
   dt <- fmap nf $ withLocals [(di, et)] $ tcExp de
-  forM_ as $ \(PCon c vs, a) -> do
+  forM_ as $ \(AAlt c vs a) -> do
     con <- lookupCon c
     let (tc, vst) = apply (conType con) $ fmap EVar vs
     let ws = zip vs vst
@@ -149,15 +152,29 @@ tcCase as (di, de) e = do
       tcExp $ subst u a
     ensureEq (subst u dt) (nf at) $ "Case alternatives with different result types."
   return dt
+tcCase (PAlts as) (di, de) e = do
+  et <- tcExp e
+  dt <- fmap nf $ withLocals [(di, de)] $ tcExp de
+  forM_ as $ \(PAlt l a) -> do
+    ensureEq et (litType l) $ "Type mismatch in literal pattern."
+    at <- tcExp a
+    ensureEq dt (nf at) $ "Case alternatives with different result types."
+  return dt
 
 tcVar :: Ident -> Check Type
 tcVar = lookupLocal
 
 --------------------------------------------------------------------------------
 
--- todo
+tcPrim :: Prim -> PrimOp -> [Exp] -> Check Type
+tcPrim p _ xs = do
+  forM_ xs $ \x -> do
+    xt <- tcExp x
+    ensureEq (EConst $ CPrim p) xt $ "Mismatch in primitive type."
+  return $ EConst $ CPrim p
+
 litType :: Lit -> Type
-litType (LInt _) = EConst $ CGlobal "Pylon.Prim.Int"
+litType (LInt _) = EConst $ CPrim PInt
 
 --------------------------------------------------------------------------------
 
