@@ -24,7 +24,9 @@ type Name = String
 
 -- | Code for a STG program.
 mkProgram :: Program -> Codegen ()
-mkProgram = mapM_ mkBind
+mkProgram p = do
+  [qq|var stg = require('./stg');{endl}|]
+  mapM_ mkBind p
 
 -- | Code for a STG expression; binds the value of the expression to a fresh
 -- | name and returns that name.
@@ -51,12 +53,12 @@ mkExp (ELet bs e)  = mkELet bs e
 mkECase :: Alts -> Exp -> Codegen Name
 mkECase (AAlts [] (Default dv de)) scr = do
   scrE <- mkExp scr
-  [qq|__stg_force({scrE});{endl}|]
+  [qq|stg.force({scrE});{endl}|]
   forM_ dv $ \v -> [qq|var {v} = {scrE};{endl}|]
   mkExp de
 mkECase (AAlts as def) scr = withTemp $ \result -> do
   scrE <- mkExp scr
-  [qq|__stg_force({scrE});{endl}|]
+  [qq|stg.force({scrE});{endl}|]
   [qq|var {result};{endl}|]
   [qq|switch ({scrE}.index) \{{endl}|]
   indent $ do
@@ -112,7 +114,7 @@ mkDefault scr result (Default dv de) = do
 mkEApp :: Var -> [Atom] -> Codegen Name
 mkEApp v as = withTemp $ \result -> do
   let args = intercalate ", " $ v : fmap mkAtom as
-  [qq|var $result = __stg_apply($args);{endl}|]
+  [qq|var $result = stg.apply($args);{endl}|]
 
 -- | Code for primitive application: The arguments are intercalated by the
 -- | primitive operator.
@@ -169,7 +171,7 @@ mkObject (Con c as) = do
   [qq|code : function() \{}{endl}|]
 mkObject (Thunk e) = do
   [qq|type : 3,{endl}|]
-  [qq|code : __stg_thunk(function() \{{endl}|]
+  [qq|code : stg.thunk(function() \{{endl}|]
   withRet $ mkExp e
   [qq|})|]
 mkObject Error = do

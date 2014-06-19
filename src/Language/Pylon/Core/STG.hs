@@ -73,13 +73,12 @@ genProgram = do
 -- |
 -- | Creates a function object for lambda expressions and a thunk otherwise.
 genBind :: (Name, Bind) -> Trans STG.Bind
-genBind (name, Bind ee _) = go ee 0 where
-  go (ELam _ e) n = go e (n + 1)
-  go e          0 = (STG.Bind name . STG.Thunk) <$> genExp e
-  go e          n = do
-    vs <- freshNames n
+genBind (name, Bind ee _) = go ee [] where
+  go (ELam (v, _) e) vs = go e (vs ++ [v])
+  go e               [] = (STG.Bind name . STG.Thunk) <$> genExp e
+  go e               vs = do
     et <- genExp e
-    return $ STG.Bind name $ STG.Fun vs et
+    return $ STG.Bind name $ STG.Fun (fmap toName vs) et
 
 --------------------------------------------------------------------------------
 -- Expressions

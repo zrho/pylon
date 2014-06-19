@@ -19,13 +19,10 @@ import Control.Applicative hiding (Const)
 import           Data.Foldable (toList, forM_)
 import           Data.Map      (Map)
 import qualified Data.Map as M
+import           Data.Set      (Set)
+import qualified Data.Set as S
 import           Data.Monoid   ((<>))
 import           Data.Maybe    (fromMaybe)
-
-import Debug.Trace
-
---traceM :: (Monad m) => String -> m ()
---traceM msg = traceShow msg $ return ()
 
 --------------------------------------------------------------------------------
 
@@ -33,12 +30,12 @@ newtype Check a = Check { fromCheck :: StateT CheckState (Either String) a }
   deriving (Functor, Applicative, Monad, MonadState CheckState, MonadError String)
 
 data CheckState = CheckState
-  { csLocals  :: Map Ident Type
-  , csProgram :: Program
+  { csLocals   :: Map Ident Type
+  , csProgram  :: Program
   } deriving (Eq, Show)
 
 runCheck :: Check a -> Program -> Either String a
-runCheck go p = fmap fst $ runStateT (fromCheck go) (CheckState M.empty p)
+runCheck go p = fmap fst $ runStateT (fromCheck go) (CheckState M.empty p S.empty)
 
 --------------------------------------------------------------------------------
 
@@ -46,6 +43,9 @@ withLocals :: [(Ident, Type)] -> Check a -> Check a
 withLocals vs go = do
   ws <- gets csLocals
   modify $ \s -> s { csLocals = M.fromList vs <> ws }
+  -- check the type of the variables
+  forM_ vs $ \(v, t) -> tcExp t
+  -- execute in environment
   x <- go
   modify $ \s -> s { csLocals = ws }
   return x
@@ -86,7 +86,6 @@ tcBind :: (Name, Bind) -> Check ()
 tcBind (name, Bind e t) = do
   et <- tcExp e
   ensureEq (nf t) (nf et) $ "Type mismatch in binding: " ++ name
-  --traceM $ show (nf t, nf et, fromSubst u)
   return ()
 
 --------------------------------------------------------------------------------
@@ -121,18 +120,20 @@ tcApp f x = tcExpNF f >>= \ft -> case ft of
 
 tcLam :: Ident -> Type -> Exp -> Check Type
 tcLam i t e = do
-  _  <- tcExp t -- check t
   rt <- withLocals [(i, t)] $ tcExp e
   return $ EPi (i, t) rt
 
 tcPi :: Ident -> Type -> Exp -> Check Type
 tcPi i t e = do
-  _ <- tcExp t -- check t
   _ <- withLocals [(i, t)] $ tcExp e
   return $ EConst CUniv
 
 tcLet :: [(Ident, Exp, Type)] -> Exp -> Check Type
-tcLet bs e = error "todo"
+tcLet bs e = do
+  let vs = fmap (\(i, _, t) -> (i, t)) bs
+  withLocals vs $ do
+    forM_ bs $ \(_, x, t) -> tcExp x
+    tcExp e
 
 tcCase :: [(Pat, Exp)] -> (Ident, Exp) -> Exp -> Check Type
 tcCase as (di, de) e = do
@@ -148,28 +149,6 @@ tcCase as (di, de) e = do
       tcExp $ subst u a
     ensureEq (subst u dt) (nf at) $ "Case alternatives with different result types."
   return dt
-
-{-
-Id   :: (a : Type) -> (b : Type) -> (x : a) -> (x : b) -> Type
-Refl :: (a : Type) -> (x : a) -> Id a a x x
-
-p    :: Id Int b 5 y
-
-(a : Type) -> (x : a) -> Id a a x x ~ (c : ct) -> (z : zt) -> Id Int b 5 y
-
-c  <- Int
-ct <- Type
-z  <- 5
-a  <- Int
-b  <- Int
-x  <- 5
-y  <- 5
-
-Id c c z z ~ Id Int b 5 y
-
-case p of
-  Refl c z -> z
--}
 
 tcVar :: Ident -> Check Type
 tcVar = lookupLocal
