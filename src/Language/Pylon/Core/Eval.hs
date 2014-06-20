@@ -121,10 +121,6 @@ unify el er = gets usSubst >>= \s -> go (subst s el) (subst s er) where
       unless (x == y) $ throwError "Literal mismatch in case expression."
       unify a b
 
-  {-
-$ 
-  -}
-
 occurs :: Ident -> Exp -> Bool
 occurs _ _ = False -- todo
 

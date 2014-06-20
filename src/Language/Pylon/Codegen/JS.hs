@@ -31,11 +31,11 @@ mkProgram p = do
 -- | Code for a STG expression; binds the value of the expression to a fresh
 -- | name and returns that name.
 mkExp :: Exp -> Codegen Name
-mkExp (EApp v as)     = mkEApp v as
-mkExp (EPrim p po as) = mkEPrim p po as
-mkExp (ECase as d e)  = mkECase as d e
-mkExp (EAtom a)       = mkEAtom a
-mkExp (ELet bs e)     = mkELet bs e
+mkExp (EApp v as)    = mkEApp v as
+mkExp (EPrim po as)  = mkEPrim po as
+mkExp (ECase as d e) = mkECase as d e
+mkExp (EAtom a)      = mkEAtom a
+mkExp (ELet bs e)    = mkELet bs e
 
 -------------------------------------------------------------------------------
 -- Case Expressions
@@ -118,23 +118,27 @@ mkEApp v as = withTemp $ \result -> do
 
 -- | Code for primitive application: The arguments are intercalated by the
 -- | primitive operator.
-mkEPrim :: Prim -> PrimOp -> [Exp] -> Codegen Name
-mkEPrim p po as = withTemp $ \result -> do
+mkEPrim :: PrimOp -> [Exp] -> Codegen Name
+mkEPrim (PForeign f _ _) as = withTemp $ \result -> do
+  vs <- mapM mkExp as
+  let args = intercalate ", " vs
+  [qq|var $result = {f}({args});{endl}|]
+mkEPrim po as = withTemp $ \result -> do
   vs <- mapM mkExp as
   let ops = intercalate (mkPrim po) vs
-  [qq|var $result = $ops;{endl}|]
+  [qq|var {result} = {ops};{endl}|]
 
 -- | Primitive operators.
 mkPrim :: PrimOp -> String
-mkPrim PPlus      = "+"
-mkPrim PMult      = "*"
-mkPrim PDiv       = "/"
-mkPrim PMinus     = "-"
-mkPrim PEq        = "==="
-mkPrim PLt        = "<"
-mkPrim PLte       = "<="
-mkPrim PGt        = ">"
-mkPrim PGte       = ">="
+mkPrim (PPlus _)  = "+"
+mkPrim (PMult _)  = "*"
+mkPrim (PDiv _)   = "/"
+mkPrim (PMinus _) = "-"
+mkPrim (PEq _)    = "==="
+mkPrim (PLt _)    = "<"
+mkPrim (PLte _)   = "<="
+mkPrim (PGt _)    = ">"
+mkPrim (PGte _)   = ">="
 
 ----------------------------------------------------------------------------
 -- Let Expressions and Bindings

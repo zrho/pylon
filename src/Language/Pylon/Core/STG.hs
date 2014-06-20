@@ -73,7 +73,7 @@ genProgram = do
 -- |
 -- | Creates a function object for lambda expressions and a thunk otherwise.
 genBind :: (Name, Bind) -> Trans STG.Bind
-genBind (name, BindExp ee _) = go ee [] where
+genBind (name, Bind ee _) = go ee [] where
   go (ELam (v, _) e) vs = go e (vs ++ [v])
   go e               [] = (STG.Bind name . STG.Thunk) <$> genExp e
   go e               vs = do
@@ -96,7 +96,7 @@ genExp (ECase as d e)  = genCase as d e
 genExp (EVar i)        = genVar i
 genExp (EApp f x)      = genApp f [x]
 genExp (ELam (i, _) e) = genLam [i] e
-genExp (EPrim p po xs) = genPrim p po xs
+genExp (EPrim po xs)   = genPrim po xs
 
 --------------------------------------------------------------------------------
 -- Constants and Literals
@@ -113,7 +113,9 @@ genConst :: Const -> Trans STG.Exp
 genConst (CLit l)    = return $ STG.EAtom $ STG.ALit $ toLit l
 genConst c@(CCon _)  = genApp (EConst c) []
 genConst CUniv       = throwError "Can not translate universes."
+genConst (CPrimUniv) = throwError "Can not translate primitive universes."
 genConst (CGlobal n) = return $ toVar n
+genConst (CPrim p)   = throwError "Can not translate primitive types."
 
 toLit :: Lit -> STG.Lit
 toLit (LInt i) = STG.LInt i
@@ -245,19 +247,20 @@ genAlts (PAlts as) = fmap STG.PAlts $ forM as $ \(PAlt l e) ->
 -- Primitives
 --------------------------------------------------------------------------------
 
-genPrim :: Prim -> PrimOp -> [Exp] -> Trans STG.Exp
-genPrim p po xs = STG.EPrim (toPrim p) (toPrimOp po) <$> mapM genExp xs
+genPrim :: PrimOp -> [Exp] -> Trans STG.Exp
+genPrim po xs = STG.EPrim (toPrimOp po) <$> mapM genExp xs
 
 toPrimOp :: PrimOp -> STG.PrimOp
-toPrimOp PPlus  = STG.PPlus
-toPrimOp PMult  = STG.PMult
-toPrimOp PDiv   = STG.PDiv
-toPrimOp PMinus = STG.PMinus
-toPrimOp PEq    = STG.PEq
-toPrimOp PLt    = STG.PLt
-toPrimOp PLte   = STG.PLte
-toPrimOp PGt    = STG.PGt
-toPrimOp PGte   = STG.PGte
+toPrimOp (PPlus p)         = STG.PPlus (toPrim p)
+toPrimOp (PMult p)         = STG.PMult (toPrim p)
+toPrimOp (PDiv p)          = STG.PDiv (toPrim p)
+toPrimOp (PMinus p)        = STG.PMinus (toPrim p)
+toPrimOp (PEq p)           = STG.PEq (toPrim p)
+toPrimOp (PLt p)           = STG.PLt (toPrim p)
+toPrimOp (PLte p)          = STG.PLte (toPrim p)
+toPrimOp (PGt p)           = STG.PGt (toPrim p)
+toPrimOp (PGte p)          = STG.PGte (toPrim p)
+toPrimOp (PForeign v ps p) = STG.PForeign v (fmap toPrim ps) (toPrim p)
 
 toPrim :: Prim -> STG.Prim
 toPrim PInt = STG.PInt

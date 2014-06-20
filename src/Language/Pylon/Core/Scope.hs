@@ -66,8 +66,7 @@ scopeProgram (Program cs bs) = Program
   <*> mapM scopeBind bs
 
 scopeBind :: Bind -> Scope Bind
-scopeBind (BindExp e t) = BindExp <$> scopeExp e <*> scopeExp t
-scopeBind (BindForeign f t) = BindForeign f <$> scopeExp t
+scopeBind (Bind e t) = Bind <$> scopeExp e <*> scopeExp t
 
 scopeCon :: Con -> Scope Con
 scopeCon (Con i t) = Con i <$> scopeExp t

@@ -33,8 +33,8 @@ type Name = String
 
 -- | Pylon Core program. Consists of expression bindings and data constructors.
 data Program = Program
-  { prData :: Map String Con
-  , prBind :: Map String Bind
+  { prData    :: Map String Con
+  , prBind    :: Map String Bind
   } deriving (Eq, Show)
 
 -- | Data constructor.
@@ -50,10 +50,10 @@ data Con = Con
   } deriving (Eq, Show)
 
 -- | Function binding: An expression and its type.
-data Bind
-  = BindExp     { bndExp     :: Exp , bndType :: Exp }
-  | BindForeign { bndForeign :: Name, bndType :: Exp }
-    deriving (Eq, Show)
+data Bind = Bind
+  { bndExp :: Exp
+  , bndType :: Exp
+  } deriving (Eq, Show)
 
 --------------------------------------------------------------------------------
 -- Expressions
@@ -68,7 +68,7 @@ data ExpF e
   | FLet   [(Ident, e, e)] e
   | FCase  (Alts e) (Ident, e) e
   | FVar   Ident
-  | FPrim  Prim PrimOp [e]
+  | FPrim  PrimOp [e]
   deriving (Eq, Show, Functor, Foldable, Traversable)
 
 newtype Exp = Exp { fromExp :: ExpF Exp }
@@ -101,7 +101,7 @@ pattern EPi a b     = Exp (FPi a b)
 pattern ELet a b    = Exp (FLet a b)
 pattern ECase a b c = Exp (FCase a b c)
 pattern EVar a      = Exp (FVar a)
-pattern EPrim a b c = Exp (FPrim a b c)
+pattern EPrim a b   = Exp (FPrim a b)
 
 -- | Types are expressions.
 type Type = Exp
@@ -141,20 +141,21 @@ data Const
 data Lit = LInt Integer deriving (Eq, Show)
 
 -- | Primitive value.
-data Prim = PInt deriving (Eq, Show)
+data Prim = PInt deriving (Eq, Show, Ord)
 
 -- | Primitive operation.
 data PrimOp
-  = PPlus
-  | PMult
-  | PDiv
-  | PMinus
-  | PEq
-  | PLt
-  | PLte
-  | PGt
-  | PGte
-  deriving (Eq, Show, Ord, Enum, Bounded)
+  = PPlus Prim
+  | PMult Prim
+  | PDiv Prim
+  | PMinus Prim
+  | PEq Prim
+  | PLt Prim
+  | PLte Prim
+  | PGt Prim
+  | PGte Prim
+  | PForeign Name [Prim] Prim
+  deriving (Eq, Show, Ord)
 
 --------------------------------------------------------------------------------
 -- Identifier

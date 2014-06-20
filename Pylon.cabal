@@ -18,8 +18,8 @@ library
                       Language.Pylon.Core.STG,
                       Language.Pylon.Core.Eval,
                       Language.Pylon.Core.Check,
-                      Language.Pylon.STG.AST
-                      Language.Pylon.Codegen.JS
+                      Language.Pylon.STG.AST,
+                      Language.Pylon.Codegen.JS,
                       Language.Pylon.Codegen.Monad
   other-modules:      Language.Pylon.Util.Name,
                       Language.Pylon.Util.Fold,

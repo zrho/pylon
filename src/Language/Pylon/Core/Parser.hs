@@ -174,7 +174,7 @@ bindDeclP = do
   T.symbol "="
   e    <- expP
   T.semi
-  return (name, BindExp e ty)
+  return (name, Bind e ty)
   <?> "binding"
 
 --------------------------------------------------------------------------------
