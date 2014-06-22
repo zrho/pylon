@@ -14,14 +14,12 @@ module Language.Pylon.Codegen.Monad
 import Language.Pylon.Util.Name
 
 import Control.Applicative
-import Control.Monad              (liftM, ap)
 import Control.Monad.State        (State, runState)
 import Control.Monad.State.Class  (MonadState, gets, modify)
 import Control.Monad.Trans.Writer (WriterT, runWriterT)
 import Control.Monad.Writer.Class (MonadWriter, pass, tell)
-
 import Data.String                (IsString, fromString)
-import Data.Maybe                 (listToMaybe)
+
 import Data.Monoid                (Monoid, mempty, mappend)
 
 -------------------------------------------------------------------------------

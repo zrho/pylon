@@ -19,7 +19,6 @@
 module Language.Pylon.Util.Fold where
 
 import Prelude              hiding (sequence, mapM)
-import Control.Applicative
 import Control.Arrow
 import Control.Monad        hiding (mapM, sequence)
 import Data.Traversable

@@ -171,7 +171,7 @@ tcVar = lookupLocal
 tcPrim :: PrimOp -> [Exp] -> Check Type
 tcPrim p xs = do
   let (as, r) = primType p
-  unless (length as == length xs) $ throwError "Un/oversaturated primitive application."
+  unless (length as == length xs) $ throwError "Under/oversaturated primitive application."
   forM_ (zip as xs) $ \(a, x) -> do
     xt <- fmap nf $ tcExp x
     ensureEq (EConst $ CPrim a) xt $ "Mismatch in primitive type."
