@@ -27,13 +27,16 @@ import Control.Monad.State.Class  (MonadState, gets, modify)
 import Control.Monad.Trans.State  (StateT, runStateT)
 import Control.Applicative hiding (Const)
 
-import           Data.Foldable (toList, forM_)
+import           Data.Foldable (toList, forM_, foldMap)
 import           Data.Map      (Map)
 import qualified Data.Map as M
 import           Data.Set      (Set)
 import qualified Data.Set as S
 import           Data.Monoid   ((<>))
 import           Data.Maybe    (fromMaybe)
+import           Data.List     (sort)
+
+import Debug.Trace
 
 --------------------------------------------------------------------------------
 -- Monad
@@ -105,9 +108,26 @@ tcProgram = do
   mapM_ tcBind $ M.toList $ prBind p
 
 tcBind :: (Name, Bind) -> Check ()
-tcBind (name, Bind e t) = do
-  et <- tcExp e
-  ensureEq (nf t) (nf et) $ "Type mismatch in binding: " ++ name
+tcBind (name, Bind Nothing t) = return ()
+tcBind (name, Bind (Just ms) t) = do
+  -- todo check lhs count
+  mapM_ (tcMatch name) ms
+
+--------------------------------------------------------------------------------
+-- Matches
+--------------------------------------------------------------------------------
+
+tcMatch :: Name -> Match -> Check ()
+tcMatch name (Match vs lhs rhs) =
+  withLocals vs $ do
+    unless (isLhsForm name lhs) $ throwError $ "Illegal left hand side form in binding: " ++ name
+    lhst <- tcExp lhs
+    rhst <- tcExp rhs
+    ensureEq (nf lhst) (nf rhst) $ "Type mismatch in binding: " ++ name
+
+isLhsForm :: Name -> Exp -> Bool
+isLhsForm n (EApp f x)           = isLhsForm n f
+isLhsForm n (EConst (CGlobal m)) = n == m
 
 --------------------------------------------------------------------------------
 -- Expressions
@@ -118,8 +138,7 @@ tcExp (EConst c )     = tcConst c
 tcExp (EApp f x )     = tcApp f x
 tcExp (ELam (i, t) e) = tcLam i t e
 tcExp (EPi (i, t) e ) = tcPi i t e
-tcExp (ELet bs e)     = tcLet bs e 
-tcExp (ECase as d e)  = tcCase as d e
+tcExp (ELet bs e)     = tcLet bs e
 tcExp (EVar i)        = tcVar i
 tcExp (EPrim po xs)   = tcPrim po xs
 
@@ -193,50 +212,6 @@ primType p = case p of
 
 litType :: Lit -> Type
 litType (LInt _) = EConst $ CPrim PInt
-
---------------------------------------------------------------------------------
--- Case Expressions
---------------------------------------------------------------------------------
-
--- | Check case expressions.
-tcCase :: Alts Exp -> (Ident, Exp) -> Exp -> Check Type
-tcCase (AAlts as) d e = tcCaseAlg as d e
-tcCase (PAlts as) d e = tcCasePrim as d e
-
--- | Check algebraic cases.
-tcCaseAlg :: [AAlt Exp] -> (Ident, Exp) -> Exp -> Check Type
-tcCaseAlg as (di, de) e = do
-  -- type of the scrutinee
-  et <- tcExp e
-  -- type of the default alternative
-  dt <- fmap nf $ withLocals [(di, et)] $ tcExp de
-  -- type check alternatives
-  forM_ as $ \(AAlt c vs a) -> do
-    con <- lookupCon c
-    -- apply the constructor type to the variables
-    -- tc then is the expected type of the scrutinee,
-    -- vst the types of the variables
-    let (tc, vst) = apply (conType con) $ fmap EVar vs
-    let ws = zip vs vst
-    -- unify the actual scrutinee type with tc
-    u <- liftEither $ runUnify $ unify tc et
-    -- now check the alternative's expression
-    at <- withLocals ws $ substLocals u $ do
-      ls <- gets csLocals
-      tcExp $ subst u a
-    ensureEq (subst u dt) (nf at) $ "Case alternatives with different result types."
-  return dt
-
--- | Check primitive cases.
-tcCasePrim :: [PAlt Exp] -> (Ident, Exp) -> Exp -> Check Type
-tcCasePrim as (di, de) e = do
-  et <- tcExp e
-  dt <- fmap nf $ withLocals [(di, de)] $ tcExp de
-  forM_ as $ \(PAlt l a) -> do
-    ensureEq et (litType l) $ "Type mismatch in literal pattern."
-    at <- tcExp a
-    ensureEq dt (nf at) $ "Case alternatives with different result types."
-  return dt
 
 --------------------------------------------------------------------------------
 

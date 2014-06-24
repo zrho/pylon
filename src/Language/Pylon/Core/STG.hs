@@ -19,7 +19,8 @@ module Language.Pylon.Core.STG where
 import           Language.Pylon.Util
 import           Language.Pylon.Util.Name
 import           Language.Pylon.Core.AST
-import qualified Language.Pylon.STG.AST  as STG
+import qualified Language.Pylon.Core.CaseTree as CT
+import qualified Language.Pylon.STG.AST       as STG
 
 import Control.Monad              (replicateM, forM)
 import Control.Monad.Error.Class  (MonadError, throwError)
@@ -28,8 +29,9 @@ import Control.Monad.Trans.State  (StateT, runStateT)
 import Control.Monad.Trans.Class  (lift)
 import Control.Applicative hiding (Const)
 
-import           Data.Foldable (toList)
+import           Data.Foldable (toList, fold)
 import qualified Data.Map as M
+import           Data.Monoid
 
 --------------------------------------------------------------------------------
 -- Monad
@@ -73,12 +75,54 @@ genProgram = do
 -- |
 -- | Creates a function object for lambda expressions and a thunk otherwise.
 genBind :: (Name, Bind) -> Trans STG.Bind
-genBind (name, Bind ee _) = go ee [] where
-  go (ELam (v, _) e) vs = go e (vs ++ [v])
-  go e               [] = (STG.Bind name . STG.Thunk) <$> genExp e
-  go e               vs = do
-    et <- genExp e
-    return $ STG.Bind name $ STG.Fun (fmap toName vs) et
+genBind (name, Bind Nothing t)   = error "todo STG imports"
+genBind (name, Bind (Just ms) _) = STG.Bind name <$> genMatches ms
+
+--------------------------------------------------------------------------------
+-- Matches
+--------------------------------------------------------------------------------
+
+genMatches :: [Match] -> Trans STG.Object
+genMatches [] = throwError "No matches."
+genMatches ms = do
+  qs <- mapM genMatchEqu ms
+  let n   = matchArity $ head ms
+  let def = EConst $ CGlobal "error" --todo
+  let (vs, ct) = CT.toCaseTree n qs def
+  e <- genCaseTree ct
+  return $ if n == 0
+    then STG.Thunk e
+    else STG.Fun (fmap toName vs) e
+
+genMatchEqu :: Match -> Trans CT.Equ
+genMatchEqu (Match vs lhs rhs) = do
+  let lhsArgs = appArgs lhs
+  ps <- mapM genLhsArgPat lhsArgs
+  return $ CT.Equ ps rhs
+
+genLhsArgPat :: Exp -> Trans CT.Pat
+genLhsArgPat e 
+  | (EVar v, []) <- appSplit e
+  = return $ CT.PVar v
+  | (EConst (CCon c), xs) <- appSplit e
+  = CT.PCon <$> lookupCon c <*> mapM genLhsArgPat xs
+  | otherwise
+  = throwError $ "Illegal expression in pattern: " ++ show e
+
+
+genCaseTree :: CT.CaseTree -> Trans STG.Exp
+genCaseTree (CT.CExp e) = genExp e
+genCaseTree (CT.CCase v cls) = do
+  alts <- mapM genClause cls
+  let def  = STG.Default Nothing $ STG.EAtom $ STG.AVar "stg.error"
+  let scr  = toVar $ toName v
+  return $ STG.ECase (STG.AAlts alts) def scr
+
+genClause :: CT.Clause -> Trans STG.AAlt
+genClause (CT.Clause c vs e) = do
+  e' <- genCaseTree e
+  let vs' = fmap toName vs
+  return $ STG.AAlt (conIndex c) vs' e'
 
 --------------------------------------------------------------------------------
 -- Expressions
@@ -92,7 +136,6 @@ genExp :: Exp -> Trans STG.Exp
 genExp (EConst c )     = genConst c
 genExp (EPi _ _  )     = throwError "Can not translate pi expressions to STG."
 genExp (ELet bs e)     = genLet bs e
-genExp (ECase as d e)  = genCase as d e
 genExp (EVar i)        = genVar i
 genExp (EApp f x)      = genApp f [x]
 genExp (ELam (i, _) e) = genLam [i] e
@@ -221,27 +264,6 @@ genLam is e               = do
 -- | creating thunks.
 toBind :: (STG.Var, Exp) -> Trans STG.Bind
 toBind (n,e) = (STG.Bind n . STG.Thunk) <$> genExp e
-
---------------------------------------------------------------------------------
--- Case Expressions
---------------------------------------------------------------------------------
-
--- | STG code for case expressions.
-genCase :: Alts Exp -> (Ident, Exp) -> Exp -> Trans STG.Exp
-genCase as (di, de) e = do
-  et <- genExp e
-  at <- genAlts as
-  dt <- genExp de
-  let def = STG.Default (Just $ toName di) dt
-  return $ STG.ECase at def et
-
-genAlts :: Alts Exp -> Trans STG.Alts
-genAlts (AAlts as) = fmap STG.AAlts $ forM as $ \(AAlt c vs e) -> do
-  et <- genExp e
-  ct <- fmap conIndex $ lookupCon c
-  return $ STG.AAlt ct (fmap toName vs) et
-genAlts (PAlts as) = fmap STG.PAlts $ forM as $ \(PAlt l e) -> 
-  STG.PAlt (toLit l) <$> genExp e
 
 --------------------------------------------------------------------------------
 -- Primitives

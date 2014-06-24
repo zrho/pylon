@@ -20,6 +20,8 @@ module Language.Pylon.Core.Scope where
 
 import Prelude hiding (mapM)
 import Language.Pylon.Core.AST
+import Language.Pylon.Util.Fold
+import Control.Arrow
 import Control.Applicative hiding (Const)
 import Control.Monad.State.Class  (MonadState, get, put)
 import Control.Monad.Reader.Class (MonadReader, asks, local)
@@ -27,8 +29,11 @@ import Control.Monad.State        (State, runState)
 import Control.Monad.Trans.Reader (ReaderT, runReaderT)
 
 import           Data.Traversable (forM, mapM)
+import           Data.Foldable    (foldMap, fold)
+import           Data.Maybe       (fromMaybe)
 import           Data.Map         (Map)
 import qualified Data.Map as M
+import qualified Data.Set as S
 
 --------------------------------------------------------------------------------
 -- Monad
@@ -66,10 +71,36 @@ scopeProgram (Program cs bs) = Program
   <*> mapM scopeBind bs
 
 scopeBind :: Bind -> Scope Bind
-scopeBind (Bind e t) = Bind <$> scopeExp e <*> scopeExp t
+scopeBind (Bind ms t) = Bind
+  <$> (mapM . mapM) scopeMatch ms
+  <*> scopeExp t
 
 scopeCon :: Con -> Scope Con
 scopeCon (Con i t) = Con i <$> scopeExp t
+
+--------------------------------------------------------------------------------
+-- Matches and Patterns
+--------------------------------------------------------------------------------
+
+scopeMatch :: Match -> Scope Match
+scopeMatch (Match vs lhs rhs) = do
+  is <- mapM allocScope $ fmap (iName . fst) vs
+  withScope is $ do
+    lhs' <- scopeExp lhs
+    rhs' <- scopeExp rhs
+    ts   <- mapM (scopeExp . snd) vs
+    return $ Match (zip is ts) lhs' rhs'
+
+{-patVarNames :: Pat -> S.Set Name
+patVarNames = cata alg where
+  alg (PFVar v) = S.singleton (iName v)
+  alg p         = fold p
+
+patVarScope :: [Ident] -> Pat -> Pat
+patVarScope is = cata alg where
+  alg (PFVar v) = maybe (PVar v) PVar $ M.lookup (iName v) isMap
+  alg p         = inF p
+  isMap         = M.fromList $ fmap (iName &&& id) is-}
 
 --------------------------------------------------------------------------------
 -- Expression Level
@@ -81,7 +112,6 @@ scopeExp (EApp f x)         = scopeApp f x
 scopeExp (ELam b e)         = scopeLam b e
 scopeExp (EPi b e)          = scopePi b e
 scopeExp (ELet bs e)        = scopeLet bs e
-scopeExp (ECase ps d e)     = scopeCase ps d e
 scopeExp (EVar (Ident n _)) = scopeVar n
 
 scopeLam :: (Ident, Type) -> Exp -> Scope Exp
@@ -107,21 +137,6 @@ scopeLet bs e = do
       t' <- scopeExp t
       return (i, e', t')
     ELet bs' <$> scopeExp e
-
-scopeCase :: Alts Exp -> (Ident, Exp) -> Exp -> Scope Exp
-scopeCase as (di, de) e = do
-  di'   <- allocScope $ iName di
-  de'   <- withScope [di] $ scopeExp de
-  as'   <- scopeAlts as
-  ECase as' (di', de') <$> scopeExp e
-
-scopeAlts :: Alts Exp -> Scope (Alts Exp)
-scopeAlts (AAlts as) = fmap AAlts $ forM as $ \(AAlt con vs e) -> do
-  ws  <- mapM (allocScope . iName) vs
-  e' <- withScope ws $ scopeExp e
-  return (AAlt con ws e')
-scopeAlts (PAlts as) = fmap PAlts $ forM as $ \(PAlt l e) -> 
-  PAlt l <$> scopeExp e
 
 scopeConst :: Const -> Scope Exp
 scopeConst = return . EConst

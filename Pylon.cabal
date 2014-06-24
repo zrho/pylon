@@ -13,17 +13,19 @@ cabal-version:        >=1.10
 
 library
   exposed-modules:    Language.Pylon.Core.AST,
-                      Language.Pylon.Core.Parser,
                       Language.Pylon.Core.Scope,
                       Language.Pylon.Core.STG,
                       Language.Pylon.Core.Eval,
                       Language.Pylon.Core.Check,
+                      Language.Pylon.Core.CaseTree,
+                      Language.Pylon.Core.Parser,
                       Language.Pylon.STG.AST,
                       Language.Pylon.Codegen.JS,
                       Language.Pylon.Codegen.Monad
   other-modules:      Language.Pylon.Util.Name,
                       Language.Pylon.Util.Fold,
                       Language.Pylon.Util.Subst,
+                      Language.Pylon.Util.Matcher,
                       Language.Pylon.Util
   other-extensions:   OverloadedStrings,
                       FlexibleInstances,

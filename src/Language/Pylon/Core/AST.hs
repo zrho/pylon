@@ -12,7 +12,7 @@
 --------------------------------------------------------------------------------
 {-# LANGUAGE PatternSynonyms, MultiParamTypeClasses #-}
 {-# LANGUAGE DeriveFunctor, DeriveFoldable, DeriveTraversable #-}
-{-# LANGUAGE MagicHash #-}
+{-# LANGUAGE MagicHash, ViewPatterns #-}
 module Language.Pylon.Core.AST where
 --------------------------------------------------------------------------------
 
@@ -22,8 +22,9 @@ import Data.Maybe               (fromMaybe)
 import Data.Map                 (Map)
 import Data.String              (IsString, fromString)
 import Data.Function            (on)
-import Data.Foldable            (Foldable)
+import Data.Foldable            (Foldable, fold)
 import Data.Traversable         (Traversable)
+import qualified Data.Set as S
 
 --------------------------------------------------------------------------------
 -- Top Level
@@ -51,7 +52,7 @@ data Con = Con
 
 -- | Function binding: An expression and its type.
 data Bind = Bind
-  { bndExp :: Exp
+  { bndBody :: Maybe [Match]
   , bndType :: Exp
   } deriving (Eq, Show)
 
@@ -66,7 +67,6 @@ data ExpF e
   | FLam   (Ident, e)  e
   | FPi    (Ident, e)  e
   | FLet   [(Ident, e, e)] e
-  | FCase  (Alts e) (Ident, e) e
   | FVar   Ident
   | FPrim  PrimOp [e]
   deriving (Eq, Show, Functor, Foldable, Traversable)
@@ -99,7 +99,6 @@ pattern EApp a b    = Exp (FApp a b)
 pattern ELam a b    = Exp (FLam a b)
 pattern EPi a b     = Exp (FPi a b)
 pattern ELet a b    = Exp (FLet a b)
-pattern ECase a b c = Exp (FCase a b c)
 pattern EVar a      = Exp (FVar a)
 pattern EPrim a b   = Exp (FPrim a b)
 
@@ -110,16 +109,7 @@ type Type = Exp
 -- Misc
 --------------------------------------------------------------------------------
 
-data Alts e
-  = AAlts [AAlt e]
-  | PAlts [PAlt e]
-  deriving (Eq, Show, Functor, Foldable, Traversable)
-
-data AAlt e = AAlt Name [Ident] e
-  deriving (Eq, Show, Functor, Foldable, Traversable)
-
-data PAlt e = PAlt Lit e
-  deriving (Eq, Show, Functor, Foldable, Traversable)
+data Match = Match [(Ident, Exp)] Exp Exp deriving (Eq, Show)
 
 -- | Constant value.
 data Const
@@ -181,6 +171,9 @@ instance IsString Ident where
 -- Helper Functions
 --------------------------------------------------------------------------------
 
+matchArity :: Match -> Int
+matchArity (Match _ lhs _) = length $ appArgs lhs
+
 -- | Arity of a constructor.
 conArity :: Con -> Int
 conArity = typeArity . conType
@@ -194,6 +187,22 @@ funResult :: Type -> Type
 funResult (EPi _ e) = funResult e
 funResult e         = e
 
-funArgs :: Type -> [Type]
-funArgs (EPi (_, t) e) = funArgs e ++ [t]
+funArgs :: Type -> [(Ident, Type)]
+funArgs (EPi (i, t) e) = funArgs e ++ [(i, t)]
 funArgs e              = []
+
+appArgs :: Exp -> [Exp]
+appArgs (EApp f x) = appArgs f ++ [x]
+appArgs e          = []
+
+appFun :: Exp -> Exp
+appFun (EApp f _) = appFun f
+appFun e          = e
+
+appSplit :: Exp -> (Exp, [Exp])
+appSplit e = (appFun e, appArgs e)
+
+{-patVars :: Pat -> S.Set Ident
+patVars = cata alg where
+  alg (PFVar v) = S.singleton v
+  alg p         = fold p-}

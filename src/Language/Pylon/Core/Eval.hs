@@ -60,9 +60,6 @@ bound = cata alg where
   alg f@(FLam (i, _) _)     = S.insert i $ fold f
   alg f@(FPi (i, _) _)      = S.insert i $ fold f
   alg f@(FLet bs _)         = (S.fromList $ fmap (\(i, _, _) -> i) bs) <> fold f
-  alg f@(FCase as (d, _) _) = S.singleton d <> fold f <> case as of
-    AAlts as -> S.fromList $ foldMap (\(AAlt _ vs _) -> vs) as
-    _        -> S.empty
   alg f                     = fold f
 
 --------------------------------------------------------------------------------
@@ -105,21 +102,7 @@ unify el er = gets usSubst >>= \s -> go (subst s el) (subst s er) where
       tellBound i j
       unify t l
     unify x y
-  go (ECase ps (ci, ce) x) (ECase qs (di, de) y) = do
-    tellBound ci di
-    unify x y
-    unify ce de
-    goAlts ps qs
   go x y = throwError $ "Unify mismatch in: " ++ show (x, y)
-  goAlts (AAlts as) (AAlts bs) = forM_ (zip as bs) $
-    \((AAlt c vs a), (AAlt d ws b)) -> do
-      unless (c == d) $ throwError "Constructor mismatch in case expression."
-      forM_ (zip vs ws) $ \(v, w) -> tellBound v w
-      unify a b
-  goAlts (PAlts as) (PAlts bs) = forM_ (zip as bs) $
-    \((PAlt x a), (PAlt y b)) -> do
-      unless (x == y) $ throwError "Literal mismatch in case expression."
-      unify a b
 
 occurs :: Ident -> Exp -> Bool
 occurs _ _ = False -- todo

@@ -69,34 +69,6 @@ typedIdent = (,)
   <*> (T.symbol ":" *> simpleP)
 
 --------------------------------------------------------------------------------
--- Case Expressions
---------------------------------------------------------------------------------
-
-caseP :: Parser Exp
-caseP = do
-  T.symbol "case"
-  s <- expP
-  T.symbol "of"
-  (as, d) <- T.braces $ semiSepEndBy caseAltP caseDefP
-  return $ ECase (AAlts as) d s
-  <?> "case expression"
-
-caseAltP :: Parser (AAlt Exp)
-caseAltP = do
-  c  <- T.ident conStyle
-  vs <- many (T.ident varStyle) 
-  T.symbol "=>"
-  e <- expP
-  return $ AAlt c vs e 
-  <?> "case alternative"
-
-caseDefP :: Parser (Ident, Exp)
-caseDefP = (,)
-  <$> (T.ident varStyle)
-  <*> (T.symbol "=>" *> expP)
-  <?> "default alternative"
-
---------------------------------------------------------------------------------
 -- Let Expressions
 --------------------------------------------------------------------------------
 
@@ -122,7 +94,6 @@ simpleP =
       T.parens expP
   <|> lamP
   <|> letP
-  <|> caseP
   <|> constP
   <|> varP
   <?> "simple expression"
@@ -170,12 +141,21 @@ bindDeclP :: Parser (Name, Bind)
 bindDeclP = do
   T.symbol "def"
   name <- T.ident varStyle <?> "binding name"
-  ty   <- T.parens expP       <?> "binding type"
+  ty   <- T.parens expP    <?> "binding type"
   T.symbol "="
-  e    <- expP
+  e    <- fmap Just $ T.braces $ semiSep matchP
   T.semi
   return (name, Bind e ty)
   <?> "binding"
+
+matchP :: Parser Match
+matchP = do
+  vs  <- T.parens $ T.commaSep typedIdent
+  lhs <- appP
+  T.symbol "="
+  rhs <- expP
+  return $ Match vs lhs rhs
+  <?> "match"
 
 --------------------------------------------------------------------------------
 -- Utilities
