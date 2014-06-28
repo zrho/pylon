@@ -18,9 +18,10 @@ module Language.Pylon.Core.Check where
 import Language.Pylon.Util
 import Language.Pylon.Util.Subst
 import Language.Pylon.Core.AST
+import Language.Pylon.Core.Monad
 import Language.Pylon.Core.Eval
 
-import Control.Arrow              
+import Control.Arrow
 import Control.Monad              (unless, void)
 import Control.Monad.Error.Class  (MonadError, throwError, catchError)
 import Control.Monad.State.Class  (MonadState, gets, modify)
@@ -49,6 +50,9 @@ data CheckState = CheckState
   { csLocals   :: Map Ident Type
   , csProgram  :: Program
   } deriving (Eq, Show)
+
+instance MonadProgram Check where
+  getProgram = gets csProgram
 
 runCheck :: Check a -> Program -> Either String a
 runCheck go p = fmap fst $ runStateT (fromCheck go) (CheckState M.empty p)
@@ -85,18 +89,6 @@ substLocals u go = do
   x <- go
   modify $ \s -> s { csLocals = vs }
   return x
-
--- | Looks up a constructor in the checked program.
-lookupCon :: Name -> Check Con
-lookupCon name = gets (prData . csProgram) >>= \d -> case M.lookup name d of
-  Just con -> return con
-  Nothing  -> throwError $ "No such constructor: " ++ name
-
--- | Looks up a binding in the checked program.
-lookupBind :: Name -> Check Bind
-lookupBind name = gets (prBind . csProgram) >>= \b -> case M.lookup name b of
-  Just bnd -> return bnd
-  Nothing  -> throwError $ "No such binding: " ++ name
 
 --------------------------------------------------------------------------------
 -- Programs
@@ -145,7 +137,7 @@ tcExp (EPrim po xs)   = tcPrim po xs
 tcExpNF :: Exp -> Check Type
 tcExpNF = fmap nf . tcExp
 
-tcConst :: Const -> Check Type 
+tcConst :: Const -> Check Type
 tcConst (CLit    lit ) = return $ litType lit
 tcConst (CCon    name) = conType <$> lookupCon name
 tcConst (CGlobal name) = bndType <$> lookupBind name

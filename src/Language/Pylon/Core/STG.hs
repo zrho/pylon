@@ -13,12 +13,14 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE TupleSections #-}
 {-# LANGUAGE PatternSynonyms #-}
+{-# LANGUAGE ParallelListComp #-}
 module Language.Pylon.Core.STG where
 --------------------------------------------------------------------------------
 
 import           Language.Pylon.Util
 import           Language.Pylon.Util.Name
 import           Language.Pylon.Core.AST
+import           Language.Pylon.Core.Monad
 import qualified Language.Pylon.Core.CaseTree as CT
 import qualified Language.Pylon.STG.AST       as STG
 
@@ -49,18 +51,13 @@ instance MonadName [Char] Trans where
   freshName = do
     n <- gets tsNames
     modify $ \s -> s { tsNames = n + 1 }
-    return $ "_g" ++ show n
+    toName $ IGen "STG" n
+
+instance MonadProgram Trans where
+  getProgram = gets tsProgram
 
 runTrans :: Trans a -> Program -> Either String a
 runTrans go p = fmap fst $ runStateT (fromTrans go) $ TransState p 0
-
--- | Looks up a constructor in the program.
-lookupCon :: Name -> Trans Con
-lookupCon name = do
-  dat <- gets $ prData . tsProgram
-  case M.lookup name dat of
-    Just c  -> return c
-    Nothing -> throwError $ "No such constructor: " ++ name
 
 --------------------------------------------------------------------------------
 -- Programs
@@ -72,8 +69,6 @@ genProgram = do
   mapM genBind $ M.toList $ prBind p
 
 -- | STG code for an expression binding.
--- |
--- | Creates a function object for lambda expressions and a thunk otherwise.
 genBind :: (Name, Bind) -> Trans STG.Bind
 genBind (name, Bind Nothing t)   = error "todo STG imports"
 genBind (name, Bind (Just ms) _) = STG.Bind name <$> genMatches ms
@@ -82,46 +77,33 @@ genBind (name, Bind (Just ms) _) = STG.Bind name <$> genMatches ms
 -- Matches
 --------------------------------------------------------------------------------
 
+-- | Generates an object for a list of left hand side matches.
+-- |
+-- | The list of matches is first transformed into a case tree,
+-- | which is in turn transformed into STG expressions in `genCaseTree`.
+-- |
+-- | After that, depending on the number of arguments in the matches,
+-- | either a thunk or a function object is created.
 genMatches :: [Match] -> Trans STG.Object
 genMatches [] = throwError "No matches."
 genMatches ms = do
-  qs <- mapM genMatchEqu ms
-  let n   = matchArity $ head ms
   let def = EConst $ CGlobal "error" --todo
-  let (vs, ct) = CT.toCaseTree n qs def
-  e <- genCaseTree ct
-  return $ if n == 0
-    then STG.Thunk e
-    else STG.Fun (fmap toName vs) e
+  (ct, vs) <- CT.toCaseTree ms def
+  toThunkOrFun <$> genCaseTree ct <*> mapM toName vs
 
-genMatchEqu :: Match -> Trans CT.Equ
-genMatchEqu (Match vs lhs rhs) = do
-  let lhsArgs = appArgs lhs
-  ps <- mapM genLhsArgPat lhsArgs
-  return $ CT.Equ ps rhs
-
-genLhsArgPat :: Exp -> Trans CT.Pat
-genLhsArgPat e 
-  | (EVar v, []) <- appSplit e
-  = return $ CT.PVar v
-  | (EConst (CCon c), xs) <- appSplit e
-  = CT.PCon <$> lookupCon c <*> mapM genLhsArgPat xs
-  | otherwise
-  = throwError $ "Illegal expression in pattern: " ++ show e
-
-
+-- | Generates nested STG case expressions for a case tree.
 genCaseTree :: CT.CaseTree -> Trans STG.Exp
 genCaseTree (CT.CExp e) = genExp e
 genCaseTree (CT.CCase v cls) = do
   alts <- mapM genClause cls
   let def  = STG.Default Nothing $ STG.EAtom $ STG.AVar "stg.error"
-  let scr  = toVar $ toName v
-  return $ STG.ECase (STG.AAlts alts) def scr
+  STG.ECase (STG.AAlts alts) def <$> genVar v
 
+-- | Generates an STG alternative for a case tree clause.
 genClause :: CT.Clause -> Trans STG.AAlt
 genClause (CT.Clause c vs e) = do
-  e' <- genCaseTree e
-  let vs' = fmap toName vs
+  e'  <- genCaseTree e
+  vs' <- mapM toName vs
   return $ STG.AAlt (conIndex c) vs' e'
 
 --------------------------------------------------------------------------------
@@ -149,7 +131,7 @@ genExp (EPrim po xs)   = genPrim po xs
 -- |
 -- | Constructor constants are translated like constructor applications
 -- | with no arguments. See `genAppCon` for constructor saturation.
--- | 
+-- |
 -- | Since no type level code is translated to STG, universes have no
 -- | STG translation.
 genConst :: Const -> Trans STG.Exp
@@ -168,7 +150,7 @@ toLit (LInt i) = STG.LInt i
 --------------------------------------------------------------------------------
 
 -- | STG code for applications.
--- | 
+-- |
 -- | Collects nested applications to a single application with multiple
 -- | arguments for more efficient STG code.
 -- |
@@ -189,7 +171,9 @@ genAppFun f xs = do
   fn <- freshName
   xn <- freshNames $ length xs
   -- create bindings for the arguments
-  bs <- mapM toBind $ (fn, f) : zip xn xs
+  xs' <- mapM genExp xs
+  f'  <- genExp f
+  let bs = [ toBind n x | n <- fn : xn | x <- f' : xs' ]
   -- assemble let
   return $ STG.ELet bs $ STG.EApp fn $ fmap STG.AVar xn
 
@@ -219,22 +203,26 @@ genAppCon cn xs = do
     fn <- freshName
     return $ STG.ELet [STG.Bind fn $ STG.Fun yn sat] $ toVar fn
   -- now bind arguments
-  bs <- mapM toBind $ zip xn xs
+  xs' <- mapM genExp xs
+  let bs = [ toBind n x | n <- xn | x <- xs' ]
   return $ STG.ELet bs inner
-  
+
 --------------------------------------------------------------------------------
 -- Variables
 --------------------------------------------------------------------------------
 
 genVar :: Ident -> Trans STG.Exp
-genVar  = return . toVar . toName
+genVar i = toVar <$> toName i
 
 -- | Lifts a variable name into a STG expression.
 toVar :: Name -> STG.Exp
 toVar = STG.EAtom . STG.AVar
 
-toName :: Ident -> Name
-toName (Ident _ i) = "_u" ++ show i
+toName :: Ident -> Trans Name
+toName (ISource s)   = throwError "Unscoped source name escaped to STG translation."
+toName (IScoped s i) = return $ "_s" ++ show i
+toName (IGen s i)    = return $ "_g" ++ show i ++ "_" ++ s
+toName (IIndex i)    = throwError "DeBruijn index escaped to STG translation."
 
 --------------------------------------------------------------------------------
 -- Let and Lambda Bindings
@@ -243,7 +231,7 @@ toName (Ident _ i) = "_u" ++ show i
 -- | STG code for let bindings.
 genLet :: [(Ident, Exp, Type)] -> Exp -> Trans STG.Exp
 genLet ds e = do
-  bs <- mapM toBind $ fmap (\(i, e, _) -> (toName i, e)) ds
+  bs <- mapM genLetBind ds
   et <- genExp e
   return $ STG.ELet bs et
 
@@ -255,15 +243,15 @@ genLet ds e = do
 genLam :: [Ident] -> Exp -> Trans STG.Exp
 genLam is (ELam (i, _) e) = genLam (is ++ [i]) e
 genLam is e               = do
-  fn <- freshName
-  et <- genExp e
-  let b = STG.Bind fn $ STG.Fun (fmap toName is) et
+  fn  <- freshName
+  et  <- genExp e
+  is' <- mapM toName is
+  let b = STG.Bind fn $ STG.Fun is' et
   return $ STG.ELet [b] $ STG.EAtom $ STG.AVar fn
 
--- | Creates bindings for expressions. Lazyness is achieved by
--- | creating thunks.
-toBind :: (STG.Var, Exp) -> Trans STG.Bind
-toBind (n,e) = (STG.Bind n . STG.Thunk) <$> genExp e
+-- | Creates a binding for let expressions.
+genLetBind :: (Ident, Exp, Type) -> Trans STG.Bind
+genLetBind (i, e, _) = toBind <$> toName i <*> genExp e
 
 --------------------------------------------------------------------------------
 -- Primitives
@@ -286,3 +274,15 @@ toPrimOp (PForeign v ps p) = STG.PForeign v (fmap toPrim ps) (toPrim p)
 
 toPrim :: Prim -> STG.Prim
 toPrim PInt = STG.PInt
+
+--------------------------------------------------------------------------------
+-- Misc
+--------------------------------------------------------------------------------
+
+toThunkOrFun :: STG.Exp -> [STG.Var] -> STG.Object
+toThunkOrFun e [] = STG.Thunk e
+toThunkOrFun e xs = STG.Fun xs e
+
+-- | Creates bindings for expressions.
+toBind :: STG.Var -> STG.Exp -> STG.Bind
+toBind i e = STG.Bind i $ STG.Thunk e

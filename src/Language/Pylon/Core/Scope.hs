@@ -49,17 +49,17 @@ allocScope :: Name -> Scope Ident
 allocScope name = do
   i <- get
   _ <- put $ i + 1
-  return $ Ident name i
+  return $ IScoped name i
 
 withScope :: [Ident] -> Scope a -> Scope a
 withScope is go = do
-  let js = fmap (\(Ident n u) -> (n, u)) is
+  let js = fmap (\(IScoped n u) -> (n, u)) is
   local (\ls -> foldr (uncurry M.insert) ls js) go
 
 findScope :: Name -> Scope (Maybe Ident)
 findScope name = do
   mi <- asks $ M.lookup name
-  return $ fmap (Ident name) mi
+  return $ fmap (IScoped name) mi
 
 --------------------------------------------------------------------------------
 -- Top Level
@@ -84,23 +84,12 @@ scopeCon (Con i t) = Con i <$> scopeExp t
 
 scopeMatch :: Match -> Scope Match
 scopeMatch (Match vs lhs rhs) = do
-  is <- mapM allocScope $ fmap (iName . fst) vs
+  is <- mapM allocScope [ n | (ISource n, _) <- vs]
   withScope is $ do
     lhs' <- scopeExp lhs
     rhs' <- scopeExp rhs
     ts   <- mapM (scopeExp . snd) vs
     return $ Match (zip is ts) lhs' rhs'
-
-{-patVarNames :: Pat -> S.Set Name
-patVarNames = cata alg where
-  alg (PFVar v) = S.singleton (iName v)
-  alg p         = fold p
-
-patVarScope :: [Ident] -> Pat -> Pat
-patVarScope is = cata alg where
-  alg (PFVar v) = maybe (PVar v) PVar $ M.lookup (iName v) isMap
-  alg p         = inF p
-  isMap         = M.fromList $ fmap (iName &&& id) is-}
 
 --------------------------------------------------------------------------------
 -- Expression Level
@@ -112,17 +101,18 @@ scopeExp (EApp f x)         = scopeApp f x
 scopeExp (ELam b e)         = scopeLam b e
 scopeExp (EPi b e)          = scopePi b e
 scopeExp (ELet bs e)        = scopeLet bs e
-scopeExp (EVar (Ident n _)) = scopeVar n
+scopeExp (EVar (ISource n)) = scopeVar n
+scopeExp e                  = return e
 
 scopeLam :: (Ident, Type) -> Exp -> Scope Exp
-scopeLam (Ident n _, t) e = do
+scopeLam (ISource n, t) e = do
   i  <- allocScope n
   t' <- scopeExp t
   e' <- withScope [i] $ scopeExp e
   return $ ELam (i, t') e'
 
 scopePi :: (Ident, Type) -> Exp -> Scope Exp
-scopePi (Ident n _, t) e = do
+scopePi (ISource n, t) e = do
   i  <- allocScope n
   t' <- scopeExp t
   e' <- withScope [i] $ scopeExp e
@@ -130,7 +120,7 @@ scopePi (Ident n _, t) e = do
 
 scopeLet :: [(Ident, Exp, Type)] -> Exp -> Scope Exp
 scopeLet bs e = do
-  vs   <- forM bs $ \(i, _, _) -> allocScope $ iName i
+  vs   <- mapM allocScope [ n | (ISource n, _, _) <- bs ]
   withScope vs $ do
     bs'  <- forM (zip vs bs) $ \(i, (_, e, t)) -> do
       e' <- scopeExp e

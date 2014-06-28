@@ -149,23 +149,21 @@ data PrimOp
 -- Identifier
 --------------------------------------------------------------------------------
 
--- | Identifier. May contain a unique index.
-data Ident = Ident
-  { iName   :: String
-  , iUnique :: Int
-  }
+data Ident
+  = ISource String
+  | IScoped String Int
+  | IGen    String Int
+  | IIndex  Int
+  deriving (Eq, Ord)
 
 instance Show Ident where
-  show (Ident n u) = n ++ "{" ++ show u ++ "}"
-
-instance Eq Ident where
-  (==) = (==) `on` iUnique
-
-instance Ord Ident where
-  compare = compare `on` iUnique
+  show (ISource n)   = n
+  show (IScoped n s) = concat ["{scp", n, ":", show s, "}"]
+  show (IGen t i)    = concat ["{gen ", show t, ":", show i ,"}"]
+  show (IIndex i)    = concat ["{idx ", show i ,"}"]
 
 instance IsString Ident where
-  fromString s = Ident s (-1)
+  fromString = ISource
 
 --------------------------------------------------------------------------------
 -- Helper Functions
@@ -201,8 +199,3 @@ appFun e          = e
 
 appSplit :: Exp -> (Exp, [Exp])
 appSplit e = (appFun e, appArgs e)
-
-{-patVars :: Pat -> S.Set Ident
-patVars = cata alg where
-  alg (PFVar v) = S.singleton v
-  alg p         = fold p-}
