@@ -61,7 +61,11 @@ appP = do
   return $ foldl EApp x xs
 
 piP :: Parser Exp
-piP = (EPi <$> T.parens typedIdent <*> (T.symbol "->" *> piP)) <|> appP
+piP = go <|> appP where
+  go = do
+    (i, t) <- T.parens typedIdent
+    e      <- (T.symbol "->" *> piP)
+    return $ EPi i t e
 
 typedIdent :: Parser (Ident, Type)
 typedIdent = (,)
@@ -102,13 +106,14 @@ varP :: Parser Exp
 varP = EVar <$> T.ident varStyle    <?> "global identifier"
 
 lamP :: Parser Exp
-lamP = ELam
-  <$> (T.symbol "\\" *> typedIdent)
-  <*> (T.symbol "->" *> expP)
+lamP = do
+  (i, t) <- T.symbol "\\" *> typedIdent
+  e      <- T.symbol "->" *> expP
+  return $ ELam i t e
   <?> "lambda abstraction"
 
 constP :: Parser Exp
-constP = fmap EConst $ 
+constP = fmap EConst $
       ((CLit . LInt) <$> try T.integer       <?> "integer literal")
   <|> (const CUniv   <$> T.symbol "Type"     <?> "universe")
   <|> (CCon          <$> T.ident conStyle    <?> "constructor")

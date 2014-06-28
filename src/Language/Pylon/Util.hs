@@ -25,3 +25,9 @@ safeIndex :: [a] -> Int -> Maybe a
 safeIndex []     _ = Nothing
 safeIndex (x:_)  0 = Just x
 safeIndex (_:xs) n = safeIndex xs (n - 1)
+
+indexOf :: Eq a => a -> [a] -> Maybe Int
+indexOf x [] = Nothing
+indexOf x (y:ys)
+  | x == y    = Just 0
+  | otherwise = fmap (+1) $ indexOf x ys

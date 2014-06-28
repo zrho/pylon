@@ -116,11 +116,11 @@ genClause (CT.Clause c vs e) = do
 -- | STG translation.
 genExp :: Exp -> Trans STG.Exp
 genExp (EConst c )     = genConst c
-genExp (EPi _ _  )     = throwError "Can not translate pi expressions to STG."
+genExp (EPi _ _ _)     = throwError "Can not translate pi expressions to STG."
 genExp (ELet bs e)     = genLet bs e
 genExp (EVar i)        = genVar i
 genExp (EApp f x)      = genApp f [x]
-genExp (ELam (i, _) e) = genLam [i] e
+genExp (ELam i _ e)    = genLam [i] e
 genExp (EPrim po xs)   = genPrim po xs
 
 --------------------------------------------------------------------------------
@@ -241,8 +241,8 @@ genLet ds e = do
 -- | Nested lambdas are collected into a lambda with multiple arguments for
 -- | more efficient STG code.
 genLam :: [Ident] -> Exp -> Trans STG.Exp
-genLam is (ELam (i, _) e) = genLam (is ++ [i]) e
-genLam is e               = do
+genLam is (ELam i _ e) = genLam (is ++ [i]) e
+genLam is e            = do
   fn  <- freshName
   et  <- genExp e
   is' <- mapM toName is

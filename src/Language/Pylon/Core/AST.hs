@@ -64,8 +64,8 @@ data Bind = Bind
 data ExpF e
   = FConst Const
   | FApp   e e
-  | FLam   (Ident, e)  e
-  | FPi    (Ident, e)  e
+  | FLam   Ident e e
+  | FPi    Ident e e
   | FLet   [(Ident, e, e)] e
   | FVar   Ident
   | FPrim  PrimOp [e]
@@ -79,12 +79,12 @@ instance Fixpoint ExpF Exp where
 
 -- todo: prettier
 instance Show Exp where
-  show (EVar i)        = show i
-  show (EConst c)      = show c
-  show (EApp f x)      = concat ["(", show f, " ", show x, ")"]
-  show (ELam (i, t) e) = concat ["\\(", show i, ": ", show t, ") -> ", show e]
-  show (EPi (i, t) e)  = concat ["(", show i, ": ", show t, ") -> ", show e]
-  show e               = "(" ++ show (fromExp e) ++ ")"
+  show (EVar i)     = show i
+  show (EConst c)   = show c
+  show (EApp f x)   = concat ["(", show f, " ", show x, ")"]
+  show (ELam i t e) = concat ["\\(", show i, ": ", show t, ") -> ", show e]
+  show (EPi i t e)  = concat ["(", show i, ": ", show t, ") -> ", show e]
+  show e            = "(" ++ show (fromExp e) ++ ")"
 
 instance Eq Exp where
   (==) = (==) `on` fromExp
@@ -96,8 +96,8 @@ instance Substitutable Ident Exp where
 
 pattern EConst a    = Exp (FConst a)
 pattern EApp a b    = Exp (FApp a b)
-pattern ELam a b    = Exp (FLam a b)
-pattern EPi a b     = Exp (FPi a b)
+pattern ELam a b c  = Exp (FLam a b c)
+pattern EPi a b c   = Exp (FPi a b c)
 pattern ELet a b    = Exp (FLet a b)
 pattern EVar a      = Exp (FVar a)
 pattern EPrim a b   = Exp (FPrim a b)
@@ -158,7 +158,7 @@ data Ident
 
 instance Show Ident where
   show (ISource n)   = n
-  show (IScoped n s) = concat ["{scp", n, ":", show s, "}"]
+  show (IScoped n s) = concat ["{scp ", n, ":", show s, "}"]
   show (IGen t i)    = concat ["{gen ", show t, ":", show i ,"}"]
   show (IIndex i)    = concat ["{idx ", show i ,"}"]
 
@@ -178,15 +178,15 @@ conArity = typeArity . conType
 
 -- | Arity of a type.
 typeArity :: Exp -> Int
-typeArity (EPi _ e) = 1 + typeArity e
+typeArity (EPi _ _ e) = 1 + typeArity e
 typeArity _         = 0
 
 funResult :: Type -> Type
-funResult (EPi _ e) = funResult e
+funResult (EPi _ _ e) = funResult e
 funResult e         = e
 
 funArgs :: Type -> [(Ident, Type)]
-funArgs (EPi (i, t) e) = funArgs e ++ [(i, t)]
+funArgs (EPi i t e) = funArgs e ++ [(i, t)]
 funArgs e              = []
 
 appArgs :: Exp -> [Exp]

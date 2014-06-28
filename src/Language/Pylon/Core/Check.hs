@@ -126,13 +126,13 @@ isLhsForm n (EConst (CGlobal m)) = n == m
 --------------------------------------------------------------------------------
 
 tcExp :: Exp -> Check Type
-tcExp (EConst c )     = tcConst c
-tcExp (EApp f x )     = tcApp f x
-tcExp (ELam (i, t) e) = tcLam i t e
-tcExp (EPi (i, t) e ) = tcPi i t e
-tcExp (ELet bs e)     = tcLet bs e
-tcExp (EVar i)        = tcVar i
-tcExp (EPrim po xs)   = tcPrim po xs
+tcExp (EConst c )   = tcConst c
+tcExp (EApp f x )   = tcApp f x
+tcExp (ELam i t e)  = tcLam i t e
+tcExp (EPi i t e )  = tcPi i t e
+tcExp (ELet bs e)   = tcLet bs e
+tcExp (EVar i)      = tcVar i
+tcExp (EPrim po xs) = tcPrim po xs
 
 tcExpNF :: Exp -> Check Type
 tcExpNF = fmap nf . tcExp
@@ -147,7 +147,7 @@ tcConst (CPrim p     ) = return $ EConst CPrimUniv
 
 tcApp :: Exp -> Exp -> Check Type
 tcApp f x = tcExpNF f >>= \ft -> case ft of
-  EPi (i, tx) rt -> do
+  EPi i tx rt -> do
     xt <- tcExpNF x
     ensureEq (nf tx) xt $ "Bad argument type in " ++ show (EApp f x)
     return $ subst (singletonSubst i x) rt
@@ -156,7 +156,7 @@ tcApp f x = tcExpNF f >>= \ft -> case ft of
 tcLam :: Ident -> Type -> Exp -> Check Type
 tcLam i t e = do
   rt <- withLocals [(i, t)] $ tcExp e
-  return $ EPi (i, t) rt
+  return $ EPi i t rt
 
 tcPi :: Ident -> Type -> Exp -> Check Type
 tcPi i t e = do
@@ -208,8 +208,7 @@ litType (LInt _) = EConst $ CPrim PInt
 --------------------------------------------------------------------------------
 
 ensureEq :: Exp -> Exp -> String -> Check ()
-ensureEq ex ac msg = case alphaEq ex ac of
-  Right _ -> return ()
-  Left e  -> throwError $ unlines
-    [ msg, "Expected: " ++ show ex, "Actual: " ++ show ac
-    , "Unifier message: " ++ show e ]
+ensureEq ex ac msg
+  | alphaEq ex ac = return ()
+  | otherwise     = throwError $ unlines
+    [ msg, "Expected: " ++ show ex, "Actual: " ++ show ac ]

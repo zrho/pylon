@@ -98,25 +98,25 @@ scopeMatch (Match vs lhs rhs) = do
 scopeExp :: Exp -> Scope Exp
 scopeExp (EConst c)         = scopeConst c
 scopeExp (EApp f x)         = scopeApp f x
-scopeExp (ELam b e)         = scopeLam b e
-scopeExp (EPi b e)          = scopePi b e
+scopeExp (ELam i t e)       = scopeLam i t e
+scopeExp (EPi i t e)        = scopePi i t e
 scopeExp (ELet bs e)        = scopeLet bs e
 scopeExp (EVar (ISource n)) = scopeVar n
 scopeExp e                  = return e
 
-scopeLam :: (Ident, Type) -> Exp -> Scope Exp
-scopeLam (ISource n, t) e = do
+scopeLam :: Ident -> Type -> Exp -> Scope Exp
+scopeLam (ISource n) t e = do
   i  <- allocScope n
   t' <- scopeExp t
   e' <- withScope [i] $ scopeExp e
-  return $ ELam (i, t') e'
+  return $ ELam i t' e'
 
-scopePi :: (Ident, Type) -> Exp -> Scope Exp
-scopePi (ISource n, t) e = do
+scopePi :: Ident -> Type -> Exp -> Scope Exp
+scopePi (ISource n) t e = do
   i  <- allocScope n
   t' <- scopeExp t
   e' <- withScope [i] $ scopeExp e
-  return $ EPi (i, t') e'
+  return $ EPi i t' e'
 
 scopeLet :: [(Ident, Exp, Type)] -> Exp -> Scope Exp
 scopeLet bs e = do
