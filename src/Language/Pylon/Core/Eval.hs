@@ -17,7 +17,7 @@ import Control.Monad.State.Class  (MonadState, gets, modify, get)
 import Control.Monad.Reader.Class (MonadReader, asks, local)
 import Control.Monad.Reader       (Reader, runReader)
 import Control.Monad.Error.Class  (MonadError, throwError)
-import Data.Traversable (sequence, forM)
+import Data.Traversable (sequence, forM, traverse)
 import Data.Foldable (forM_, fold, foldMap, all)
 import Data.Monoid ((<>), mempty, mconcat)
 import Data.Maybe (fromMaybe)
@@ -61,16 +61,33 @@ alphaEq x y = indexExp x == indexExp y
 newtype Indexing a = Indexing { fromIndexing :: Reader [Ident] a }
   deriving (Functor, Applicative, Monad, MonadReader [Ident])
 
+-- | Creates a DeBruijn indexed version of the expression.
 indexExp :: Exp -> Exp
 indexExp e = runReader (fromIndexing $ indexExp' e) []
 
 indexExp' :: Exp -> Indexing Exp
 indexExp' = cata alg where
-  alg (FLam i t e) = ELam i <$> t <*> with [i] e
-  alg (FPi i t e)  = EPi i <$> t <*> with [i] e
-  alg (FLet bs e)  = with [ i | (i, _, _) <- bs ] $ do
-    bs' <- forM bs $ \(i, t, x) -> (,,) i <$> t <*> x
-    ELet bs' <$> e
   alg (FVar v) = asks $ EVar . fromMaybe v . fmap IIndex . indexOf v
-  alg e = fmap inF $ sequence e
+  alg e        = fmap inF $ sequence $ scoped with e
   with xs = local (xs ++)
+
+--------------------------------------------------------------------------------
+-- Scoping
+--------------------------------------------------------------------------------
+
+-- | Scoping rules for expressions.
+scoped :: ([Ident] -> a -> a) -> ExpF a -> ExpF a
+scoped f (FLam i t e) = FLam i t $ f [i] e
+scoped f (FPi i t e)  = FPi i t $ f [i] e
+scoped f (FLet bs e)  = FLet bs' e' where
+  bs' = [ (i, f is t, f is x) | (i, t, x) <- bs]
+  e'  = f is e
+  is  = [ i | (i, _, _) <- bs ]
+scoped f e = e
+
+traverseBound :: Applicative f => (Ident -> f Ident) -> ExpF a -> f (ExpF a)
+traverseBound f (FLam i t e) = FLam  <$> f i <*> pure t <*> pure e
+traverseBound f (FPi i t e)  = FPi   <$> f i <*> pure t <*> pure e
+traverseBound f (FLet bs e)  = FLet  <$> bs' <*> pure e where
+  bs' = traverse (\(i, t, x) -> (,,) <$> f i <*> pure t <*> pure x) bs
+traverseBound f e = pure e

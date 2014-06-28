@@ -18,17 +18,19 @@
 module Language.Pylon.Core.Scope where
 --------------------------------------------------------------------------------
 
-import Prelude hiding (mapM)
+import Prelude hiding (mapM, sequence)
 import Language.Pylon.Core.AST
+import Language.Pylon.Core.Eval
 import Language.Pylon.Util.Fold
 import Control.Arrow
+import Control.Monad (join, (>=>))
 import Control.Applicative hiding (Const)
 import Control.Monad.State.Class  (MonadState, get, put)
 import Control.Monad.Reader.Class (MonadReader, asks, local)
 import Control.Monad.State        (State, runState)
 import Control.Monad.Trans.Reader (ReaderT, runReaderT)
 
-import           Data.Traversable (forM, mapM)
+import           Data.Traversable (forM, mapM, traverse, sequence)
 import           Data.Foldable    (foldMap, fold)
 import           Data.Maybe       (fromMaybe)
 import           Data.Map         (Map)
@@ -45,21 +47,23 @@ newtype Scope a = Scope { fromScope :: ReaderT (Map Name Int) (State Int) a }
 runScope :: Scope a -> a
 runScope go = fst $ runState (runReaderT (fromScope go) M.empty) 0
 
-allocScope :: Name -> Scope Ident
-allocScope name = do
+allocScope :: Ident -> Scope Ident
+allocScope (ISource n) = do
   i <- get
   _ <- put $ i + 1
-  return $ IScoped name i
+  return $ IScoped n i
+allocScope n = return n
 
 withScope :: [Ident] -> Scope a -> Scope a
 withScope is go = do
   let js = fmap (\(IScoped n u) -> (n, u)) is
   local (\ls -> foldr (uncurry M.insert) ls js) go
 
-findScope :: Name -> Scope (Maybe Ident)
-findScope name = do
+findScope :: Ident -> Scope (Maybe Ident)
+findScope (ISource name) = do
   mi <- asks $ M.lookup name
   return $ fmap (IScoped name) mi
+findScope i = return $ Just i
 
 --------------------------------------------------------------------------------
 -- Top Level
@@ -84,7 +88,7 @@ scopeCon (Con i t) = Con i <$> scopeExp t
 
 scopeMatch :: Match -> Scope Match
 scopeMatch (Match vs lhs rhs) = do
-  is <- mapM allocScope [ n | (ISource n, _) <- vs]
+  is <- mapM allocScope [ n | (n, _) <- vs]
   withScope is $ do
     lhs' <- scopeExp lhs
     rhs' <- scopeExp rhs
@@ -96,43 +100,10 @@ scopeMatch (Match vs lhs rhs) = do
 --------------------------------------------------------------------------------
 
 scopeExp :: Exp -> Scope Exp
-scopeExp (EConst c)         = scopeConst c
-scopeExp (EApp f x)         = scopeApp f x
-scopeExp (ELam i t e)       = scopeLam i t e
-scopeExp (EPi i t e)        = scopePi i t e
-scopeExp (ELet bs e)        = scopeLet bs e
-scopeExp (EVar (ISource n)) = scopeVar n
-scopeExp e                  = return e
+scopeExp = cata alg where
+  alg (FVar n) = maybe (toGlobal n) EVar <$> findScope n
+  alg e        = traverseBound allocScope e >>= fmap inF . sequence . scoped withScope
 
-scopeLam :: Ident -> Type -> Exp -> Scope Exp
-scopeLam (ISource n) t e = do
-  i  <- allocScope n
-  t' <- scopeExp t
-  e' <- withScope [i] $ scopeExp e
-  return $ ELam i t' e'
-
-scopePi :: Ident -> Type -> Exp -> Scope Exp
-scopePi (ISource n) t e = do
-  i  <- allocScope n
-  t' <- scopeExp t
-  e' <- withScope [i] $ scopeExp e
-  return $ EPi i t' e'
-
-scopeLet :: [(Ident, Exp, Type)] -> Exp -> Scope Exp
-scopeLet bs e = do
-  vs   <- mapM allocScope [ n | (ISource n, _, _) <- bs ]
-  withScope vs $ do
-    bs'  <- forM (zip vs bs) $ \(i, (_, e, t)) -> do
-      e' <- scopeExp e
-      t' <- scopeExp t
-      return (i, e', t')
-    ELet bs' <$> scopeExp e
-
-scopeConst :: Const -> Scope Exp
-scopeConst = return . EConst
-
-scopeApp :: Exp -> Exp -> Scope Exp
-scopeApp f x = EApp <$> scopeExp f <*> scopeExp x
-
-scopeVar :: Name -> Scope Exp
-scopeVar n = maybe (EConst $ CGlobal n) EVar <$> findScope n
+toGlobal :: Ident -> Exp
+toGlobal (ISource n) = EConst $ CGlobal n
+toGlobal n           = EVar n

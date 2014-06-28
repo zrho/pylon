@@ -120,6 +120,7 @@ tcMatch name (Match vs lhs rhs) =
 isLhsForm :: Name -> Exp -> Bool
 isLhsForm n (EApp f x)           = isLhsForm n f
 isLhsForm n (EConst (CGlobal m)) = n == m
+isLhsForm _ _                    = False
 
 --------------------------------------------------------------------------------
 -- Expressions
