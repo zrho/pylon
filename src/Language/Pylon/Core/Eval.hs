@@ -6,8 +6,8 @@ module Language.Pylon.Core.Eval where
 
 import Prelude hiding (sequence, all)
 import Language.Pylon.Util
-import Language.Pylon.Util.Fold
 import Language.Pylon.Util.Subst
+import Language.Pylon.Util.Generics
 import Language.Pylon.Core.AST
 import Control.Monad (unless, when)
 import Control.Arrow
@@ -17,6 +17,7 @@ import Control.Monad.State.Class  (MonadState, gets, modify, get)
 import Control.Monad.Reader.Class (MonadReader, asks, local)
 import Control.Monad.Reader       (Reader, runReader)
 import Control.Monad.Error.Class  (MonadError, throwError)
+import Data.Generics.Uniplate.Data
 import Data.Traversable (sequence, forM, traverse)
 import Data.Foldable (forM_, fold, foldMap, all)
 import Data.Monoid ((<>), mempty, mconcat)
@@ -30,7 +31,7 @@ import qualified Data.Set as S
 
 apply :: Exp -> [Exp] -> (Exp, [Type])
 apply (EPi i t e) (a:as) = (second (t:)) (apply (subst (singletonSubst i a) e) as)
-apply e               _     = (e, [])
+apply e               _  = (e, [])
 
 --------------------------------------------------------------------------------
 -- Head Normal Form
@@ -66,28 +67,10 @@ indexExp :: Exp -> Exp
 indexExp e = runReader (fromIndexing $ indexExp' e) []
 
 indexExp' :: Exp -> Indexing Exp
-indexExp' = cata alg where
-  alg (FVar v) = asks $ EVar . fromMaybe v . fmap IIndex . indexOf v
-  alg e        = fmap inF $ sequence $ scoped with e
-  with xs = local (xs ++)
-
---------------------------------------------------------------------------------
--- Scoping
---------------------------------------------------------------------------------
-
--- | Scoping rules for expressions.
-scoped :: ([Ident] -> a -> a) -> ExpF a -> ExpF a
-scoped f (FLam i t e) = FLam i t $ f [i] e
-scoped f (FPi i t e)  = FPi i t $ f [i] e
-scoped f (FLet bs e)  = FLet bs' e' where
-  bs' = [ (i, f is t, f is x) | (i, t, x) <- bs]
-  e'  = f is e
-  is  = [ i | (i, _, _) <- bs ]
-scoped f e = e
-
-traverseBound :: Applicative f => (Ident -> f Ident) -> ExpF a -> f (ExpF a)
-traverseBound f (FLam i t e) = FLam  <$> f i <*> pure t <*> pure e
-traverseBound f (FPi i t e)  = FPi   <$> f i <*> pure t <*> pure e
-traverseBound f (FLet bs e)  = FLet  <$> bs' <*> pure e where
-  bs' = traverse (\(i, t, x) -> (,,) <$> f i <*> pure t <*> pure x) bs
-traverseBound f e = pure e
+indexExp' = transformCtx g f where
+  -- transformation
+  f (EVar v)    = asks $ EVar . fromMaybe v . fmap IIndex . indexOf v
+  f e           = return e
+  -- context
+  g (EBind b _) = [local (binderIdent b :)]
+  g _           = []

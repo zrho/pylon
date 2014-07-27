@@ -77,12 +77,12 @@ typedIdent = (,)
 --------------------------------------------------------------------------------
 
 letP :: Parser Exp
-letP = ELet
-  <$> (T.symbol "let" *> T.braces (T.semiSep1 letBindingP))
+letP = (\(i, t, b) e -> ELet i t b e)
+  <$> (T.symbol "let" *> T.braces letBindingP)
   <*> (T.symbol "in"  *> expP)
   <?> "let expression"
 
-letBindingP :: Parser (Ident, Exp, Type)
+letBindingP :: Parser (Ident, Type, Exp)
 letBindingP = (,,)
   <$> (T.ident varStyle)
   <*> (T.symbol ":" *> simpleP)

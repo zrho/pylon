@@ -24,7 +24,7 @@ library
                       Language.Pylon.Codegen.JS,
                       Language.Pylon.Codegen.Monad
   other-modules:      Language.Pylon.Util.Name,
-                      Language.Pylon.Util.Fold,
+                      Language.Pylon.Util.Generics,
                       Language.Pylon.Util.Subst
                       Language.Pylon.Util
   other-extensions:   OverloadedStrings,
@@ -45,6 +45,7 @@ library
                       parsers,
                       transformers,
                       interpolatedstring-perl6,
-                      unordered-containers
+                      unordered-containers,
+                      uniplate
   hs-source-dirs:     src
   default-language:   Haskell2010

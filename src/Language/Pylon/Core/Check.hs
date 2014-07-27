@@ -54,8 +54,8 @@ data CheckState = CheckState
 instance MonadProgram Check where
   getProgram = gets csProgram
 
-runCheck :: Check a -> Program -> Either String a
-runCheck go p = fmap fst $ runStateT (fromCheck go) (CheckState M.empty p)
+runCheck :: Check a -> Program -> Map Ident Type -> Either String a
+runCheck go p loc = fmap fst $ runStateT (fromCheck go) $ CheckState loc p
 
 --------------------------------------------------------------------------------
 -- Locals and Program Context
@@ -127,13 +127,14 @@ isLhsForm _ _                    = False
 --------------------------------------------------------------------------------
 
 tcExp :: Exp -> Check Type
-tcExp (EConst c )   = tcConst c
-tcExp (EApp f x )   = tcApp f x
-tcExp (ELam i t e)  = tcLam i t e
-tcExp (EPi i t e )  = tcPi i t e
-tcExp (ELet bs e)   = tcLet bs e
-tcExp (EVar i)      = tcVar i
-tcExp (EPrim po xs) = tcPrim po xs
+tcExp (EConst c )    = tcConst c
+tcExp (EApp f x )    = tcApp f x
+tcExp (ELam i t e)   = tcLam i t e
+tcExp (EPi i t e )   = tcPi i t e
+tcExp (ELet i t b e) = tcLet i t b e
+tcExp (EVar i)       = tcVar i
+tcExp (EPrim po xs)  = tcPrim po xs
+-- todo: holes
 
 tcExpNF :: Exp -> Check Type
 tcExpNF = fmap nf . tcExp
@@ -164,12 +165,11 @@ tcPi i t e = do
   _ <- withLocals [(i, t)] $ tcExp e
   return $ EConst CUniv
 
-tcLet :: [(Ident, Exp, Type)] -> Exp -> Check Type
-tcLet bs e = do
-  let vs = fmap (\(i, _, t) -> (i, t)) bs
-  withLocals vs $ do
-    forM_ bs $ \(_, x, t) -> tcExp x
-    tcExp e
+tcLet :: Ident -> Type -> Exp -> Exp -> Check Type
+tcLet i t b e = withLocals [(i, t)] $ do
+  bt <- tcExp b
+  ensureEq (nf t) (nf bt) $ "Bad typed let binding in: " ++ show (ELet i t b e)
+  tcExp e
 
 tcVar :: Ident -> Check Type
 tcVar = lookupLocal

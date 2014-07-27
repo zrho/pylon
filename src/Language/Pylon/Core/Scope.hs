@@ -21,7 +21,7 @@ module Language.Pylon.Core.Scope where
 import Prelude hiding (mapM, sequence)
 import Language.Pylon.Core.AST
 import Language.Pylon.Core.Eval
-import Language.Pylon.Util.Fold
+import Language.Pylon.Util.Generics
 import Control.Arrow
 import Control.Monad (join, (>=>))
 import Control.Applicative hiding (Const)
@@ -100,9 +100,13 @@ scopeMatch (Match vs lhs rhs) = do
 --------------------------------------------------------------------------------
 
 scopeExp :: Exp -> Scope Exp
-scopeExp = cata alg where
-  alg (FVar n) = maybe (toGlobal n) EVar <$> findScope n
-  alg e        = traverseBound allocScope e >>= fmap inF . sequence . scoped withScope
+scopeExp = transformCtx g f where
+  -- transformation
+  f (EVar n)    = maybe (toGlobal n) EVar <$> findScope n
+  f e           = return e
+  -- context
+  g (EBind b _) = [\go -> withScope [x] (allocScope x >> go) ] where x = binderIdent b
+  g _           = []
 
 toGlobal :: Ident -> Exp
 toGlobal (ISource n) = EConst $ CGlobal n

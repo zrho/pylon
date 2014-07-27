@@ -11,13 +11,14 @@
 -- data types.
 --------------------------------------------------------------------------------
 {-# LANGUAGE PatternSynonyms, MultiParamTypeClasses #-}
-{-# LANGUAGE DeriveFunctor, DeriveFoldable, DeriveTraversable #-}
+{-# LANGUAGE DeriveDataTypeable #-}
 {-# LANGUAGE MagicHash, ViewPatterns #-}
 module Language.Pylon.Core.AST where
 --------------------------------------------------------------------------------
-
-import Language.Pylon.Util.Fold
 import Language.Pylon.Util.Subst
+import Data.Generics.Uniplate.Data
+import Data.Typeable
+import Data.Data
 import Data.Maybe               (fromMaybe)
 import Data.Map                 (Map)
 import Data.String              (IsString, fromString)
@@ -25,7 +26,6 @@ import Data.Function            (on)
 import Data.Foldable            (Foldable, fold)
 import Data.Traversable         (Traversable)
 import qualified Data.Set as S
-
 --------------------------------------------------------------------------------
 -- Top Level
 --------------------------------------------------------------------------------
@@ -36,7 +36,7 @@ type Name = String
 data Program = Program
   { prData    :: Map String Con
   , prBind    :: Map String Bind
-  } deriving (Eq, Show)
+  } deriving (Eq, Show, Data, Typeable)
 
 -- | Data constructor.
 -- |
@@ -48,34 +48,26 @@ data Program = Program
 data Con = Con
   { conIndex :: Int
   , conType  :: Exp
-  } deriving (Eq, Show)
+  } deriving (Eq, Show, Data, Typeable)
 
 -- | Function binding: An expression and its type.
 data Bind = Bind
   { bndBody :: Maybe [Match]
   , bndType :: Exp
-  } deriving (Eq, Show)
+  } deriving (Eq, Show, Data, Typeable)
 
 --------------------------------------------------------------------------------
 -- Expressions
 --------------------------------------------------------------------------------
 
 -- | Type and value level expressions.
-data ExpF e
-  = FConst Const
-  | FApp   e e
-  | FLam   Ident e e
-  | FPi    Ident e e
-  | FLet   [(Ident, e, e)] e
-  | FVar   Ident
-  | FPrim  PrimOp [e]
-  deriving (Eq, Show, Functor, Foldable, Traversable)
-
-newtype Exp = Exp { fromExp :: ExpF Exp }
-
-instance Fixpoint ExpF Exp where
-  inF  = Exp
-  outF = fromExp
+data Exp
+  = EConst Const
+  | EApp   Exp Exp
+  | EBind  Binder Exp
+  | EVar   Ident
+  | EPrim  PrimOp [Exp]
+  deriving (Eq, Data, Typeable)
 
 -- todo: prettier
 instance Show Exp where
@@ -84,32 +76,41 @@ instance Show Exp where
   show (EApp f x)   = concat ["(", show f, " ", show x, ")"]
   show (ELam i t e) = concat ["\\(", show i, ": ", show t, ") -> ", show e]
   show (EPi i t e)  = concat ["(", show i, ": ", show t, ") -> ", show e]
-  show e            = "(" ++ show (fromExp e) ++ ")"
-
-instance Eq Exp where
-  (==) = (==) `on` fromExp
 
 instance Substitutable Ident Exp where
-  subst s = cata alg where
-    alg (FVar j) = fromMaybe (EVar j) $ substVar j s
-    alg f        = inF f
-
-pattern EConst a    = Exp (FConst a)
-pattern EApp a b    = Exp (FApp a b)
-pattern ELam a b c  = Exp (FLam a b c)
-pattern EPi a b c   = Exp (FPi a b c)
-pattern ELet a b    = Exp (FLet a b)
-pattern EVar a      = Exp (FVar a)
-pattern EPrim a b   = Exp (FPrim a b)
+  subst s = transform f where
+    f (EVar j) = fromMaybe (EVar j) $ substVar j s
+    f x        = x
 
 -- | Types are expressions.
 type Type = Exp
 
 --------------------------------------------------------------------------------
+-- Binder
+--------------------------------------------------------------------------------
+
+data Binder
+  -- | lambda abstraction
+  = BLam  { binderIdent :: Ident, binderType :: Type }
+  -- | dependent function
+  | BPi   { binderIdent :: Ident, binderType :: Type }
+  -- | hole and guess binding
+  | BHole { binderIdent :: Ident, binderType :: Type, binderGuess :: Maybe Exp }
+  -- | let binders
+  | BLet  { binderIdent :: Ident, binderType :: Type, binderTerm :: Exp }
+  deriving (Eq, Show, Data, Typeable)
+
+pattern ELam a b c    = EBind (BLam a b) c
+pattern EPi  a b c    = EBind (BPi a b) c
+pattern EHole a b c d = EBind (BHole a b c) d
+pattern ELet a b c d  = EBind (BLet a b c) d
+
+--------------------------------------------------------------------------------
 -- Misc
 --------------------------------------------------------------------------------
 
-data Match = Match [(Ident, Exp)] Exp Exp deriving (Eq, Show)
+data Match = Match [(Ident, Exp)] Exp Exp
+  deriving (Eq, Show, Data, Typeable)
 
 -- | Constant value.
 data Const
@@ -119,17 +120,17 @@ data Const
   | CPrim     Prim
   | CPrimUniv
   | CUniv
-  deriving (Eq, Show)
+  deriving (Eq, Show, Data, Typeable)
 
 --------------------------------------------------------------------------------
 -- Primitives and Literals
 --------------------------------------------------------------------------------
 
 -- | Literal value.
-data Lit = LInt Integer deriving (Eq, Show)
+data Lit = LInt Integer deriving (Eq, Show, Data, Typeable)
 
 -- | Primitive value.
-data Prim = PInt deriving (Eq, Show, Ord)
+data Prim = PInt deriving (Eq, Show, Ord, Data, Typeable)
 
 -- | Primitive operation.
 data PrimOp
@@ -143,7 +144,7 @@ data PrimOp
   | PGt Prim
   | PGte Prim
   | PForeign Name [Prim] Prim
-  deriving (Eq, Show, Ord)
+  deriving (Eq, Show, Ord, Data, Typeable)
 
 --------------------------------------------------------------------------------
 -- Identifier
@@ -154,7 +155,7 @@ data Ident
   | IScoped String Int
   | IGen    String Int
   | IIndex  Int
-  deriving (Eq, Ord)
+  deriving (Eq, Ord, Data, Typeable)
 
 instance Show Ident where
   show (ISource n)   = n

@@ -116,12 +116,12 @@ genClause (CT.Clause c vs e) = do
 -- | STG translation.
 genExp :: Exp -> Trans STG.Exp
 genExp (EConst c )     = genConst c
-genExp (EPi _ _ _)     = throwError "Can not translate pi expressions to STG."
-genExp (ELet bs e)     = genLet bs e
+genExp (ELet i _ b e)  = genLet i b e
 genExp (EVar i)        = genVar i
 genExp (EApp f x)      = genApp f [x]
 genExp (ELam i _ e)    = genLam [i] e
 genExp (EPrim po xs)   = genPrim po xs
+genExp e               = throwError $ "Cannot translate to STG: " ++ show e
 
 --------------------------------------------------------------------------------
 -- Constants and Literals
@@ -229,11 +229,11 @@ toName (IIndex i)    = throwError "DeBruijn index escaped to STG translation."
 --------------------------------------------------------------------------------
 
 -- | STG code for let bindings.
-genLet :: [(Ident, Exp, Type)] -> Exp -> Trans STG.Exp
-genLet ds e = do
-  bs <- mapM genLetBind ds
+genLet :: Ident -> Exp -> Exp -> Trans STG.Exp
+genLet i b e = do
+  b' <- toBind <$> toName i <*> genExp b
   et <- genExp e
-  return $ STG.ELet bs et
+  return $ STG.ELet [b'] et
 
 -- | STG code for lambdas. Since lambdas are heap objects, a STG let binding
 -- | is created: let f = \x1 ... xn -> e in f
@@ -248,10 +248,6 @@ genLam is e            = do
   is' <- mapM toName is
   let b = STG.Bind fn $ STG.Fun is' et
   return $ STG.ELet [b] $ STG.EAtom $ STG.AVar fn
-
--- | Creates a binding for let expressions.
-genLetBind :: (Ident, Exp, Type) -> Trans STG.Bind
-genLetBind (i, e, _) = toBind <$> toName i <*> genExp e
 
 --------------------------------------------------------------------------------
 -- Primitives
