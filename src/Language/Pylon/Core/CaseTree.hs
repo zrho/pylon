@@ -127,7 +127,7 @@ matchVarCon vs qs def
 matchVar :: [Ident] -> [Equ] -> CaseTree -> CT CaseTree
 matchVar (v:vs) qs = match vs qs' where
   qs'     = [ Equ ps (sub v u e) | Equ (PVar u : ps) e <- qs ]
-  sub a b = subst (singletonSubst a $ EVar b)
+  sub a b = subst (singletonSubst a $ EFree b)
 
 -- | Elaborates a group of equations that all match a constructor first.
 -- |
@@ -163,7 +163,7 @@ matchToEqu (Match vs lhs rhs) = do
 
 lhsArgToPat :: Exp -> CT Pat
 lhsArgToPat e
-  | (EVar v, []) <- appSplit e
+  | (EFree v, []) <- appSplit e
   = return $ PVar v
   | (EConst (CCon c), xs) <- appSplit e
   = PCon <$> lookupCon c <*> mapM lhsArgToPat xs

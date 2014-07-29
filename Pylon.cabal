@@ -13,12 +13,10 @@ cabal-version:        >=1.10
 
 library
   exposed-modules:    Language.Pylon.Core.AST,
-                      Language.Pylon.Core.Scope,
                       Language.Pylon.Core.STG,
-                      Language.Pylon.Core.Eval,
+                      Language.Pylon.Core.Util,
                       Language.Pylon.Core.Check,
                       Language.Pylon.Core.CaseTree,
-                      Language.Pylon.Core.Parser,
                       Language.Pylon.Core.Monad,
                       Language.Pylon.STG.AST,
                       Language.Pylon.Codegen.JS,

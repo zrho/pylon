@@ -65,25 +65,18 @@ data Exp
   = EConst Const
   | EApp   Exp Exp
   | EBind  Binder Exp
-  | EVar   Ident
   | EPrim  PrimOp [Exp]
-  deriving (Eq, Data, Typeable)
-
--- todo: prettier
-instance Show Exp where
-  show (EVar i)     = show i
-  show (EConst c)   = show c
-  show (EApp f x)   = concat ["(", show f, " ", show x, ")"]
-  show (ELam i t e) = concat ["\\(", show i, ": ", show t, ") -> ", show e]
-  show (EPi i t e)  = concat ["(", show i, ": ", show t, ") -> ", show e]
-
-instance Substitutable Ident Exp where
-  subst s = transform f where
-    f (EVar j) = fromMaybe (EVar j) $ substVar j s
-    f x        = x
+  | ELocal Index
+  | EFree  Ident
+  deriving (Eq, Show, Data, Typeable)
 
 -- | Types are expressions.
 type Type = Exp
+
+instance Substitutable Ident Exp where
+  subst s = transform f where
+    f (EFree n) = fromMaybe (EFree n) $ substVar n s
+    f x         = x
 
 --------------------------------------------------------------------------------
 -- Binder
@@ -91,19 +84,19 @@ type Type = Exp
 
 data Binder
   -- | lambda abstraction
-  = BLam  { binderIdent :: Ident, binderType :: Type }
+  = BLam  { binderType :: Type }
   -- | dependent function
-  | BPi   { binderIdent :: Ident, binderType :: Type }
+  | BPi   { binderType :: Type }
   -- | hole and guess binding
-  | BHole { binderIdent :: Ident, binderType :: Type, binderGuess :: Maybe Exp }
+  | BHole { binderType :: Type, binderGuess :: Maybe Exp }
   -- | let binders
-  | BLet  { binderIdent :: Ident, binderType :: Type, binderTerm :: Exp }
+  | BLet  { binderType :: Type, binderTerm :: Exp }
   deriving (Eq, Show, Data, Typeable)
 
-pattern ELam a b c    = EBind (BLam a b) c
-pattern EPi  a b c    = EBind (BPi a b) c
-pattern EHole a b c d = EBind (BHole a b c) d
-pattern ELet a b c d  = EBind (BLet a b c) d
+pattern ELam a b    = EBind (BLam a) b
+pattern EPi  a b    = EBind (BPi a) b
+pattern EHole a b c = EBind (BHole a b) c
+pattern ELet a b c  = EBind (BLet a b) c
 
 --------------------------------------------------------------------------------
 -- Misc
@@ -116,7 +109,6 @@ data Match = Match [(Ident, Exp)] Exp Exp
 data Const
   = CLit      Lit
   | CCon      Name
-  | CGlobal   Name
   | CPrim     Prim
   | CPrimUniv
   | CUniv
@@ -150,18 +142,16 @@ data PrimOp
 -- Identifier
 --------------------------------------------------------------------------------
 
+type Index = Int
+
 data Ident
   = ISource String
-  | IScoped String Int
   | IGen    String Int
-  | IIndex  Int
   deriving (Eq, Ord, Data, Typeable)
 
 instance Show Ident where
   show (ISource n)   = n
-  show (IScoped n s) = concat ["{scp ", n, ":", show s, "}"]
   show (IGen t i)    = concat ["{gen ", show t, ":", show i ,"}"]
-  show (IIndex i)    = concat ["{idx ", show i ,"}"]
 
 instance IsString Ident where
   fromString = ISource
@@ -179,16 +169,12 @@ conArity = typeArity . conType
 
 -- | Arity of a type.
 typeArity :: Exp -> Int
-typeArity (EPi _ _ e) = 1 + typeArity e
+typeArity (EPi _ e) = 1 + typeArity e
 typeArity _         = 0
 
 funResult :: Type -> Type
-funResult (EPi _ _ e) = funResult e
+funResult (EPi _ e) = funResult e
 funResult e         = e
-
-funArgs :: Type -> [(Ident, Type)]
-funArgs (EPi i t e) = funArgs e ++ [(i, t)]
-funArgs e              = []
 
 appArgs :: Exp -> [Exp]
 appArgs (EApp f x) = appArgs f ++ [x]

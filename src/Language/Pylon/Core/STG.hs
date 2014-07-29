@@ -20,6 +20,7 @@ module Language.Pylon.Core.STG where
 import           Language.Pylon.Util
 import           Language.Pylon.Util.Name
 import           Language.Pylon.Core.AST
+import           Language.Pylon.Core.Util
 import           Language.Pylon.Core.Monad
 import qualified Language.Pylon.Core.CaseTree as CT
 import qualified Language.Pylon.STG.AST       as STG
@@ -48,10 +49,7 @@ data TransState = TransState
   } deriving (Eq, Show)
 
 instance MonadName [Char] Trans where
-  freshName = do
-    n <- gets tsNames
-    modify $ \s -> s { tsNames = n + 1 }
-    toName $ IGen "STG" n
+  freshName = fmap toName freshIdent
 
 instance MonadProgram Trans where
   getProgram = gets tsProgram
@@ -87,9 +85,9 @@ genBind (name, Bind (Just ms) _) = STG.Bind name <$> genMatches ms
 genMatches :: [Match] -> Trans STG.Object
 genMatches [] = throwError "No matches."
 genMatches ms = do
-  let def = EConst $ CGlobal "error" --todo
+  let def = EFree (ISource "Prelude.error") --todo
   (ct, vs) <- CT.toCaseTree ms def
-  toThunkOrFun <$> genCaseTree ct <*> mapM toName vs
+  toThunkOrFun <$> genCaseTree ct <*> pure (fmap toName vs)
 
 -- | Generates nested STG case expressions for a case tree.
 genCaseTree :: CT.CaseTree -> Trans STG.Exp
@@ -103,8 +101,7 @@ genCaseTree (CT.CCase v cls) = do
 genClause :: CT.Clause -> Trans STG.AAlt
 genClause (CT.Clause c vs e) = do
   e'  <- genCaseTree e
-  vs' <- mapM toName vs
-  return $ STG.AAlt (conIndex c) vs' e'
+  return $ STG.AAlt (conIndex c) (fmap toName vs) e'
 
 --------------------------------------------------------------------------------
 -- Expressions
@@ -116,10 +113,10 @@ genClause (CT.Clause c vs e) = do
 -- | STG translation.
 genExp :: Exp -> Trans STG.Exp
 genExp (EConst c )     = genConst c
-genExp (ELet i _ b e)  = genLet i b e
-genExp (EVar i)        = genVar i
+genExp (ELet i b e)    = genLet b e
+genExp (EFree v)       = genVar v
 genExp (EApp f x)      = genApp f [x]
-genExp (ELam i _ e)    = genLam [i] e
+genExp (ELam _ e)      = genLam 1 e
 genExp (EPrim po xs)   = genPrim po xs
 genExp e               = throwError $ "Cannot translate to STG: " ++ show e
 
@@ -139,7 +136,6 @@ genConst (CLit l)    = return $ STG.EAtom $ STG.ALit $ toLit l
 genConst c@(CCon _)  = genApp (EConst c) []
 genConst CUniv       = throwError "Can not translate universes."
 genConst (CPrimUniv) = throwError "Can not translate primitive universes."
-genConst (CGlobal n) = return $ toVar n
 genConst (CPrim p)   = throwError "Can not translate primitive types."
 
 toLit :: Lit -> STG.Lit
@@ -212,41 +208,49 @@ genAppCon cn xs = do
 --------------------------------------------------------------------------------
 
 genVar :: Ident -> Trans STG.Exp
-genVar i = toVar <$> toName i
+genVar i = return $ toVar $ toName i
 
 -- | Lifts a variable name into a STG expression.
 toVar :: Name -> STG.Exp
 toVar = STG.EAtom . STG.AVar
 
-toName :: Ident -> Trans Name
-toName (ISource s)   = throwError "Unscoped source name escaped to STG translation."
-toName (IScoped s i) = return $ "_s" ++ show i
-toName (IGen s i)    = return $ "_g" ++ show i ++ "_" ++ s
-toName (IIndex i)    = throwError "DeBruijn index escaped to STG translation."
+toName :: Ident -> Name
+toName (ISource s) = "_s" ++ s
+toName (IGen s i)  = "_g" ++ show i ++ "_" ++ s
+
+freshIdent :: Trans Ident
+freshIdent = do
+  n <- gets tsNames
+  modify $ \s -> s { tsNames = n + 1 }
+  return $ IGen "STG" n
+
+freshIdents :: Int -> Trans [Ident]
+freshIdents n = replicateM n freshIdent
 
 --------------------------------------------------------------------------------
 -- Let and Lambda Bindings
 --------------------------------------------------------------------------------
 
 -- | STG code for let bindings.
-genLet :: Ident -> Exp -> Exp -> Trans STG.Exp
-genLet i b e = do
-  b' <- toBind <$> toName i <*> genExp b
-  et <- genExp e
-  return $ STG.ELet [b'] et
+genLet :: Exp -> Exp -> Trans STG.Exp
+genLet b e = do
+  i  <- freshIdent
+  bt <- genExp b
+  et <- genExp $ open (EFree i) e
+  return $ STG.ELet [toBind (toName i) bt] et
 
 -- | STG code for lambdas. Since lambdas are heap objects, a STG let binding
 -- | is created: let f = \x1 ... xn -> e in f
 -- |
 -- | Nested lambdas are collected into a lambda with multiple arguments for
 -- | more efficient STG code.
-genLam :: [Ident] -> Exp -> Trans STG.Exp
-genLam is (ELam i _ e) = genLam (is ++ [i]) e
-genLam is e            = do
-  fn  <- freshName
-  et  <- genExp e
-  is' <- mapM toName is
-  let b = STG.Bind fn $ STG.Fun is' et
+genLam :: Int -> Exp -> Trans STG.Exp
+genLam n (ELam _ e) = genLam (n + 1) e
+genLam n e          = do
+  fn <- freshName
+  is <- freshIdents n
+  et <- genExp $ foldr open e $ fmap EFree is
+  let b = STG.Bind fn $ STG.Fun (fmap toName is) et
   return $ STG.ELet [b] $ STG.EAtom $ STG.AVar fn
 
 --------------------------------------------------------------------------------
