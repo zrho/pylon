@@ -16,6 +16,7 @@ library
                       Language.Pylon.Core.STG,
                       Language.Pylon.Core.Util,
                       Language.Pylon.Core.Check,
+                      Language.Pylon.Core.Unify,
                       Language.Pylon.Core.CaseTree,
                       Language.Pylon.Core.Monad,
                       Language.Pylon.STG.AST,
@@ -44,6 +45,8 @@ library
                       transformers,
                       interpolatedstring-perl6,
                       unordered-containers,
-                      uniplate
+                      uniplate,
+                      pretty-show,
+                      concurrent-supply
   hs-source-dirs:     src
   default-language:   Haskell2010

@@ -30,6 +30,7 @@ import Control.Monad.Trans.State  (StateT, runStateT)
 import Control.Monad.Reader.Class (MonadReader, asks, local)
 import Control.Monad.Trans.Reader (ReaderT, runReaderT)
 import Control.Applicative hiding (Const)
+import Control.Concurrent.Supply
 
 import           Data.Foldable (toList, forM_, foldMap)
 import           Data.Map      (Map)
@@ -52,20 +53,21 @@ newtype Check a = Check { fromCheck :: StateT CheckState (Either String) a }
 data CheckState = CheckState
   { csFree    :: Map Ident Type
   , csProgram :: Program
-  , csName    :: Int
+  , csNames   :: Supply
   } deriving (Eq, Show)
 
 instance MonadProgram Check where
   getProgram = gets csProgram
 
-instance MonadName Ident Check where
-  freshName = do
-    n <- gets csName
-    modify $ \s -> s { csName = n + 1 }
-    return $ IGen "Check" n
+instance MonadSupply Check where
+  getSupply   = gets csNames
+  putSupply s = modify $ \st -> st { csNames = s }
 
-runCheck :: Check a -> Program -> Map Ident Type -> Either String a
-runCheck go p loc = fmap fst $ runStateT (fromCheck go) $ CheckState loc p 0
+instance MonadName Ident Check where
+  freshName = IGen "Check" <$> supplyId
+
+runCheck :: Check a -> Program -> Supply -> Map Ident Type -> Either String a
+runCheck go p sp loc = fmap fst $ runStateT (fromCheck go) $ CheckState loc p sp
 
 --------------------------------------------------------------------------------
 -- Locals and Program Context

@@ -37,6 +37,7 @@ import Control.Applicative
 import Control.Monad.State.Class (MonadState, gets, modify)
 import Control.Monad.Trans.State (StateT, runStateT)
 import Control.Monad.Error.Class (MonadError, throwError)
+import Control.Concurrent.Supply
 
 --------------------------------------------------------------------------------
 -- Interface
@@ -44,13 +45,15 @@ import Control.Monad.Error.Class (MonadError, throwError)
 
 -- | Compiles a list of matches and a default expression into a case tree
 -- | that scrutinizes a list of variables.
-toCaseTree ::  (MonadError String m, MonadProgram m) => [Match] -> Exp -> m (CaseTree, [Ident])
-toCaseTree ms def = runCT $ do
-  let n = fromMaybe 0 $ fmap matchArity $ listToMaybe ms
-  qs <- mapM matchToEqu ms
-  vs <- freshNames n
-  ct <- match vs qs (CExp def)
-  return (ct, vs)
+toCaseTree :: (MonadError String m, MonadProgram m, MonadSupply m) => [Match] -> Exp -> m (CaseTree, [Ident])
+toCaseTree ms def = do
+  sp <- supplySplit
+  runCT sp $ do
+    let n = fromMaybe 0 $ fmap matchArity $ listToMaybe ms
+    qs <- mapM matchToEqu ms
+    vs <- freshNames n
+    ct <- match vs qs (CExp def)
+    return (ct, vs)
 
 --------------------------------------------------------------------------------
 -- Data Structures
@@ -81,22 +84,23 @@ newtype CT a = CT { fromCT :: StateT CTState (Either String) a }
 
 data CTState = CTState
   { ctProgram :: Program
-  , ctNames   :: Int
+  , ctNames   :: Supply
   } deriving (Eq, Show)
 
 instance MonadProgram CT where
   getProgram = gets ctProgram
 
-instance MonadName Ident CT where
-  freshName = do
-    n <- gets ctNames
-    modify $ \s -> s { ctNames = n + 1 }
-    return $ IGen "CaseTree" n
+instance MonadSupply CT where
+  getSupply   = gets ctNames
+  putSupply s = modify $ \st -> st { ctNames = s }
 
-runCT :: (MonadError String m, MonadProgram m) => CT a -> m a
-runCT go = do
+instance MonadName Ident CT where
+  freshName = IGen "CaseTree" <$> supplyId
+
+runCT :: (MonadError String m, MonadProgram m) => Supply -> CT a -> m a
+runCT sp go = do
   p <- getProgram
-  liftEither $ fmap fst $ runStateT (fromCT go) $ CTState p 0
+  liftEither $ fmap fst $ runStateT (fromCT go) $ CTState p sp
 
 --------------------------------------------------------------------------------
 -- Equations to Case Trees
@@ -127,7 +131,7 @@ matchVarCon vs qs def
 matchVar :: [Ident] -> [Equ] -> CaseTree -> CT CaseTree
 matchVar (v:vs) qs = match vs qs' where
   qs'     = [ Equ ps (sub v u e) | Equ (PVar u : ps) e <- qs ]
-  sub a b = subst (singletonSubst a $ EFree b)
+  sub a b = subst (mkSubst a $ EFree b)
 
 -- | Elaborates a group of equations that all match a constructor first.
 -- |

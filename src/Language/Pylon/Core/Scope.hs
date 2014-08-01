@@ -100,13 +100,15 @@ scopeMatch (Match vs lhs rhs) = do
 --------------------------------------------------------------------------------
 
 scopeExp :: Exp -> Scope Exp
-scopeExp = transformCtx g f where
+scopeExp = transformCtx ctx act where
   -- transformation
-  f (EVar n)    = maybe (toGlobal n) EVar <$> findScope n
-  f e           = return e
+  act (EVar n)    = maybe (toGlobal n) EVar <$> findScope n
+  act e           = return e
   -- context
-  g (EBind b _) = [\go -> withScope [x] (allocScope x >> go) ] where x = binderIdent b
-  g _           = []
+  ctx (EBind b _) = [ intro $ binderIdent b ]
+  ctx _           = []
+  -- helper
+  intro x go = withScope [x] (allocScope x >> go)
 
 toGlobal :: Ident -> Exp
 toGlobal (ISource n) = EConst $ CGlobal n

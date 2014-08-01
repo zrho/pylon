@@ -31,6 +31,7 @@ import Control.Monad.State.Class  (MonadState, modify, gets)
 import Control.Monad.Trans.State  (StateT, runStateT)
 import Control.Monad.Trans.Class  (lift)
 import Control.Applicative hiding (Const)
+import Control.Concurrent.Supply
 
 import           Data.Foldable (toList, fold)
 import qualified Data.Map as M
@@ -45,8 +46,12 @@ newtype Trans a = Trans { fromTrans :: StateT TransState (Either String) a }
 
 data TransState = TransState
   { tsProgram :: Program
-  , tsNames   :: Int
+  , tsNames   :: Supply
   } deriving (Eq, Show)
+
+instance MonadSupply Trans where
+  getSupply   = gets tsNames
+  putSupply s = modify $ \st -> st { tsNames = s }
 
 instance MonadName [Char] Trans where
   freshName = fmap toName freshIdent
@@ -54,8 +59,8 @@ instance MonadName [Char] Trans where
 instance MonadProgram Trans where
   getProgram = gets tsProgram
 
-runTrans :: Trans a -> Program -> Either String a
-runTrans go p = fmap fst $ runStateT (fromTrans go) $ TransState p 0
+runTrans :: Trans a -> Supply -> Program -> Either String a
+runTrans go sp p = fmap fst $ runStateT (fromTrans go) $ TransState p sp
 
 --------------------------------------------------------------------------------
 -- Programs
@@ -219,10 +224,7 @@ toName (ISource s) = "_s" ++ s
 toName (IGen s i)  = "_g" ++ show i ++ "_" ++ s
 
 freshIdent :: Trans Ident
-freshIdent = do
-  n <- gets tsNames
-  modify $ \s -> s { tsNames = n + 1 }
-  return $ IGen "STG" n
+freshIdent = IGen "STG" <$> supplyId
 
 freshIdents :: Int -> Trans [Ident]
 freshIdents n = replicateM n freshIdent

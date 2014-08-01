@@ -21,8 +21,11 @@ import qualified Data.Map as M
 
 newtype Subst k v = Subst { fromSubst :: Map k v }
 
-class Ord k => Substitutable k v | v -> k where
+class Ord k => Substitutable k v where
   subst :: Subst k v -> v -> v
+
+instance (Show k, Show v) => Show (Subst k v) where
+  show = show . fromSubst
 
 instance Functor (Subst k) where
   fmap f = Subst . fmap f . fromSubst
@@ -35,5 +38,5 @@ instance Substitutable k v => Monoid (Subst k v) where
 substVar :: Ord k => k -> Subst k v -> Maybe v
 substVar k = M.lookup k . fromSubst
 
-singletonSubst :: k -> v -> Subst k v
-singletonSubst k v = Subst $ M.singleton k v
+mkSubst :: k -> v -> Subst k v
+mkSubst k v = Subst $ M.singleton k v

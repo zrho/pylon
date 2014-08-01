@@ -68,6 +68,7 @@ data Exp
   | EPrim  PrimOp [Exp]
   | ELocal Index
   | EFree  Ident
+  | EHole  Hole
   deriving (Eq, Show, Data, Typeable)
 
 -- | Types are expressions.
@@ -78,25 +79,30 @@ instance Substitutable Ident Exp where
     f (EFree n) = fromMaybe (EFree n) $ substVar n s
     f x         = x
 
+instance Substitutable Int Exp where
+  subst s = transform f where
+    f (EHole n) = fromMaybe (EHole n) $ substVar n s
+    f x         = x
+
 --------------------------------------------------------------------------------
 -- Binder
 --------------------------------------------------------------------------------
 
 data Binder
   -- | lambda abstraction
-  = BLam  { binderType :: Type }
+  = BLam   { binderType :: Type }
   -- | dependent function
-  | BPi   { binderType :: Type }
+  | BPi    { binderType :: Type }
   -- | hole and guess binding
-  | BHole { binderType :: Type, binderGuess :: Maybe Exp }
+  | BGuess { binderType :: Type, binderGuess :: Maybe Exp }
   -- | let binders
-  | BLet  { binderType :: Type, binderTerm :: Exp }
+  | BLet   { binderType :: Type, binderTerm :: Exp }
   deriving (Eq, Show, Data, Typeable)
 
-pattern ELam a b    = EBind (BLam a) b
-pattern EPi  a b    = EBind (BPi a) b
-pattern EHole a b c = EBind (BHole a b) c
-pattern ELet a b c  = EBind (BLet a b) c
+pattern ELam a b     = EBind (BLam a) b
+pattern EPi  a b     = EBind (BPi a) b
+pattern EGuess a b c = EBind (BGuess a b) c
+pattern ELet a b c   = EBind (BLet a b) c
 
 --------------------------------------------------------------------------------
 -- Misc
@@ -142,6 +148,7 @@ data PrimOp
 -- Identifier
 --------------------------------------------------------------------------------
 
+type Hole  = Int
 type Index = Int
 
 data Ident
@@ -186,3 +193,14 @@ appFun e          = e
 
 appSplit :: Exp -> (Exp, [Exp])
 appSplit e = (appFun e, appArgs e)
+
+appMult :: Exp -> [Exp] -> Exp
+appMult f xs = foldl EApp f xs
+
+isFree :: Exp -> Bool
+isFree (EFree _) = True
+isFree _         = False
+
+isConst :: Exp -> Bool
+isConst (EConst _) = True
+isConst _          = False
