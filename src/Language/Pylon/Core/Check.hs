@@ -8,66 +8,99 @@
 -- Portability : ghc
 --
 -- Type checker for Pylon Core.
--- Requires an already scoped program.
+--
+-- TODO: check for over-specialization, as in the Idris code:
+-- > unsafe : (a : Type) -> (x : a) -> a
+-- > unsafe Bool x = False
+-- Currently this type checks unsafe code!
 --------------------------------------------------------------------------------
 {-# LANGUAGE GeneralizedNewtypeDeriving, MultiParamTypeClasses #-}
 {-# LANGUAGE PatternSynonyms #-}
-module Language.Pylon.Core.Check where
+module Language.Pylon.Core.Check
+  ( TypeError
+  , Locals
+  , checkExp
+  , checkBind
+  ) where
 --------------------------------------------------------------------------------
 
 import Language.Pylon.Util
-import Language.Pylon.Util.Subst
 import Language.Pylon.Util.Name
+import Language.Pylon.Util.Error
 import Language.Pylon.Core.AST
 import Language.Pylon.Core.Monad
 import Language.Pylon.Core.Util
 
-import Control.Arrow
-import Control.Monad              (unless, void)
-import Control.Monad.Error.Class  (MonadError, throwError, catchError)
-import Control.Monad.State.Class  (MonadState, gets, modify)
-import Control.Monad.Trans.State  (StateT, runStateT)
+import Control.Monad              (unless)
+import Control.Monad.Except       (MonadError)
+import Control.Monad.State.Class  (MonadState, get, put)
 import Control.Monad.Reader.Class (MonadReader, asks, local)
-import Control.Monad.Trans.Reader (ReaderT, runReaderT)
 import Control.Applicative hiding (Const)
 import Control.Concurrent.Supply
 
-import           Data.Foldable (toList, forM_, foldMap)
+import           Data.Foldable (forM_)
 import           Data.Map      (Map)
 import qualified Data.Map as M
-import           Data.Set      (Set)
-import qualified Data.Set as S
-import           Data.Monoid   ((<>))
-import           Data.Maybe    (fromMaybe)
-import           Data.List     (sort)
+import           Data.Monoid   (mempty, (<>))
 
-import Debug.Trace
+--------------------------------------------------------------------------------
+-- API: Type Checker
+--------------------------------------------------------------------------------
+
+type TypeError = CtxError Ann String
+type Locals    = Map Ident Type
+
+-- |
+-- Type checks a Pylon Core expression and returns its inferred type, if the
+-- expression is type correct.
+checkExp :: Supply -> Program -> Locals -> Exp -> Either TypeError Type
+checkExp s p l e = runCheck s p l (tcExp e)
+
+-- |
+-- Type checks a Pylon Core binding.
+checkBind :: Supply -> Program -> Name -> Bind -> Either TypeError ()
+checkBind s p n b = runCheck s p mempty (tcBind n b)
 
 --------------------------------------------------------------------------------
 -- Monad
 --------------------------------------------------------------------------------
 
-newtype Check a = Check { fromCheck :: StateT CheckState (Either String) a }
-  deriving (Functor, Applicative, Monad, MonadState CheckState, MonadError String)
+newtype Check a = Check
+  { fromCheck :: RWSE CheckReader () CheckState CheckError a
+  } deriving
+  ( Functor
+  , Applicative
+  , Monad
+  , MonadState  CheckState
+  , MonadReader CheckReader
+  , MonadError  CheckError
+  )
 
-data CheckState = CheckState
-  { csFree    :: Map Ident Type
-  , csProgram :: Program
-  , csNames   :: Supply
-  } deriving (Eq, Show)
+type CheckError  = TypeError
+type CheckState  = Supply
+data CheckReader = CheckReader
+  { crFree    :: Map Ident Type
+  , crProgram :: Program
+  }
 
 instance MonadProgram Check where
-  getProgram = gets csProgram
+  getProgram = asks crProgram
 
 instance MonadSupply Check where
-  getSupply   = gets csNames
-  putSupply s = modify $ \st -> st { csNames = s }
+  getSupply = get
+  putSupply = put
 
-instance MonadName Ident Check where
-  freshName = IGen "Check" <$> supplyId
+runCheck :: Supply -> Program -> Locals -> Check a -> Either CheckError a
+runCheck s p l go = runRWSE (fromCheck go) (CheckReader l p) s
 
-runCheck :: Check a -> Program -> Supply -> Map Ident Type -> Either String a
-runCheck go p sp loc = fmap fst $ runStateT (fromCheck go) $ CheckState loc p sp
+freshIdent :: Check Ident
+freshIdent = IGen "Check" <$> supplyId
+
+ensureEq :: Exp -> Exp -> String -> Check ()
+ensureEq ex ac msg
+  | ex == ac  = return ()
+  | otherwise = throwError' $ unlines
+    [ msg, "Expected: " ++ show ex, "Actual: " ++ show ac ]
 
 --------------------------------------------------------------------------------
 -- Locals and Program Context
@@ -75,56 +108,56 @@ runCheck go p sp loc = fmap fst $ runStateT (fromCheck go) $ CheckState loc p sp
 
 -- | Introduces locals into scope.
 withFree :: [(Ident, Type)] -> Check a -> Check a
-withFree vs go = do
-  ws <- gets csFree
-  modify $ \s -> s { csFree = M.fromList vs <> ws }
-  forM_ vs $ \(v, t) -> tcExp t
-  x <- go
-  modify $ \s -> s { csFree = ws }
-  return x
+withFree vs = local $ \s -> s { crFree = M.fromList vs <> crFree s }
 
 -- | Looks up the type of a local.
 lookupFree :: Ident -> Check Type
-lookupFree i = gets csFree >>= \vs -> case M.lookup i vs of
+lookupFree i = asks crFree >>= \vs -> case M.lookup i vs of
   Just v  -> return v
-  Nothing -> throwError $ "Unknown local variable: " ++ show i
+  Nothing -> throwError' $ "Unknown local variable: " ++ show i
 
 --------------------------------------------------------------------------------
--- Programs
+-- TC: Bindings and Matches
 --------------------------------------------------------------------------------
 
-tcProgram :: Check ()
-tcProgram = do
-  p <- gets csProgram
-  mapM_ tcBind $ M.toList $ prBind p
+-- |
+-- Checks a binding by checking its matches.
+tcBind :: Name -> Bind -> Check ()
+tcBind _ (Bind Nothing _)     = return ()
+tcBind n (Bind (Just []) _)   = throwError' $ "Binding without any matches: " ++ n
+tcBind n (Bind (Just ms) _)
+  | arityMismatch ms          = throwError' $ "Arity mismatch in binding: " ++ n
+  | otherwise                 = mapM_ (tcMatch n) ms
 
-tcBind :: (Name, Bind) -> Check ()
-tcBind (name, Bind Nothing t) = return ()
-tcBind (name, Bind (Just ms) t) = do
-  -- todo check lhs count
-  mapM_ (tcMatch name) ms
+-- |
+-- Determines, whether there is an mismatch in arity in the given matches.
+arityMismatch :: [Match] -> Bool
+arityMismatch = not . pairwise (==) . fmap matchArity
 
---------------------------------------------------------------------------------
--- Matches
---------------------------------------------------------------------------------
-
+-- |
+-- Checks if the match is well-formed, then tries to match the types of the
+-- left- and right-hand side.
 tcMatch :: Name -> Match -> Check ()
-tcMatch name (Match vs lhs rhs) =
-  withFree vs $ do
-    unless (isLhsForm name lhs) $ throwError $ "Illegal left hand side form in binding: " ++ name
-    lhst <- tcExp lhs
-    rhst <- tcExp rhs
-    ensureEq (hnf lhst) (hnf rhst) $ "Type mismatch in binding: " ++ name
+tcMatch name m@(Match vs lhs rhs) = withFree vs $ do
+  unless (isLhsForm name lhs) $ throwError' $ "Illegal left hand side in match: " ++ show m
+  lhst <- tcExp lhs
+  rhst <- tcExp rhs
+  ensureEq (hnf lhst) (hnf rhst) $ "Type mismatch in match: " ++ show m
 
+-- |
+-- Checks whether the expression can appear on a left hand side.
+-- todo: this is not complete yet. it accepts too much.
 isLhsForm :: Name -> Exp -> Bool
-isLhsForm n (EApp f x) = isLhsForm n f
+isLhsForm n (EApp f _) = isLhsForm n f
 isLhsForm n (EFree m)  = ISource n == m
 isLhsForm _ _          = False
 
 --------------------------------------------------------------------------------
--- Expressions
+-- TC: Expressions
 --------------------------------------------------------------------------------
 
+-- |
+-- Type checks an expression by dispatching to the respective functions.
 tcExp :: Exp -> Check Type
 tcExp (EConst c )   = tcConst c
 tcExp (EApp f x )   = tcApp f x
@@ -132,55 +165,78 @@ tcExp (ELam t e)    = tcLam t e
 tcExp (EPi t e )    = tcPi t e
 tcExp (ELet t b e)  = tcLet t b e
 tcExp (EFree i)     = tcFree i
-tcExp (ELocal i)    = tcLocal i
 tcExp (EPrim po xs) = tcPrim po xs
--- todo: holes
+tcExp (EAnn a x)    = tcAnn a x
+tcExp (ELocal _)    = throwError' $ "Unopened local while type checking."
+tcExp (EHole _)     = throwError' $ "Holes can not be type checked."
+tcExp (EBind _ _)   = error "Unmatched binder type."
 
+-- |
+-- Type checks an expression, then converts its type to head normal form.
 tcExpNF :: Exp -> Check Type
 tcExpNF = fmap hnf . tcExp
 
+-- |
+-- Logs the annotation for better error messages, then typechecks the expression.
+tcAnn :: Ann -> Exp -> Check Type
+tcAnn a e = errorContext a $ tcExp e
+
+-- |
+-- Typechecks constants.
 tcConst :: Const -> Check Type
 tcConst (CLit    lit ) = return $ litType lit
 tcConst (CCon    name) = conType <$> lookupCon name
 tcConst CUniv          = return $ EConst CUniv
 tcConst CPrimUniv      = return $ EConst CUniv
-tcConst (CPrim p     ) = return $ EConst CPrimUniv
+tcConst (CPrim _     ) = return $ EConst CPrimUniv
 
+-- |
+-- Checks if the type of the head is a function (pi) type; then opens the return
+-- type of the function type with the argument, if the argument type matches.
 tcApp :: Exp -> Exp -> Check Type
 tcApp f x = tcExpNF f >>= \ft -> case ft of
   EPi tx rt -> do
     xt <- tcExpNF x
-    ensureEq (hnf tx) xt $ "Bad argument type in " ++ show (EApp f x)
+    ensureEq (hnf tx) xt $ "Bad argument type."
     return $ open x rt
-  _ -> throwError "Application to non-function."
+  _ -> throwError' "Application to non-function."
 
+-- |
+-- Opens the body with a new identifier with the bound type, then constructs
+-- a pi type from the bound type and the inferred result type. 
 tcLam :: Type -> Exp -> Check Type
 tcLam t e = do
-  i  <- freshName
+  i  <- freshIdent
   rt <- withFree [(i, t)] $ tcExp $ open (EFree i) e
   return $ EPi t (close i rt)
 
+-- |
+-- Opens the body with a new identifier with the bound type; if it type checks,
+-- returns Universe.
 tcPi :: Type -> Exp -> Check Type
 tcPi t e = do
-  i <- freshName
+  i <- freshIdent
   _ <- withFree [(i, t)] $ tcExp $ open (EFree i) e
   return $ EConst CUniv
 
+-- |
+-- Type checks the bound expression and checks if its type matches with the
+-- given one. If so, open the body with a new identifier of the stated type and
+-- infer its type.
 tcLet :: Type -> Exp -> Exp -> Check Type
 tcLet t b e = do
-  i  <- freshName
+  i  <- freshIdent
   bt <- tcExp b
-  ensureEq (hnf t) (hnf bt) $ "Bad typed let binding in: " ++ show (ELet t b e)
-  tcExp $ open (EFree i) e
+  ensureEq (hnf t) (hnf bt) $ "Bad typed let binding."
+  withFree [(i, t)] $ tcExp $ open (EFree i) e
 
+-- |
+-- Lookup the type of the free variable in scope.
 tcFree :: Ident -> Check Type
 tcFree = lookupFree
 
-tcLocal :: Index -> Check Type
-tcLocal = error "todo"
-
 --------------------------------------------------------------------------------
--- Primitive and Literals
+-- TC: Primitive and Literals
 --------------------------------------------------------------------------------
 
 -- | Check primitive application.
@@ -188,14 +244,14 @@ tcLocal = error "todo"
 tcPrim :: PrimOp -> [Exp] -> Check Type
 tcPrim p xs = do
   let (as, r) = primType p
-  unless (length as == length xs) $ throwError "Under/oversaturated primitive application."
+  unless (length as == length xs) $ throwError' "Under/oversaturated primitive application."
   forM_ (zip as xs) $ \(a, x) -> do
     xt <- fmap hnf $ tcExp x
     ensureEq (EConst $ CPrim a) xt $ "Mismatch in primitive type."
   return $ EConst $ CPrim r
 
 primType :: PrimOp -> ([Prim], Prim)
-primType p = case p of
+primType op = case op of
   PPlus p         -> binOp p
   PMult p         -> binOp p
   PDiv p          -> binOp p
@@ -210,11 +266,3 @@ primType p = case p of
 
 litType :: Lit -> Type
 litType (LInt _) = EConst $ CPrim PInt
-
---------------------------------------------------------------------------------
-
-ensureEq :: Exp -> Exp -> String -> Check ()
-ensureEq ex ac msg
-  | ex == ac  = return ()
-  | otherwise = throwError $ unlines
-    [ msg, "Expected: " ++ show ex, "Actual: " ++ show ac ]

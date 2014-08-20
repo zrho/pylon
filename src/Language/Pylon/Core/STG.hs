@@ -53,8 +53,11 @@ instance MonadSupply Trans where
   getSupply   = gets tsNames
   putSupply s = modify $ \st -> st { tsNames = s }
 
-instance MonadName [Char] Trans where
-  freshName = fmap toName freshIdent
+freshName :: Trans String
+freshName = fmap toName freshIdent
+
+freshNames :: Int -> Trans [String]
+freshNames n = replicateM n freshName
 
 instance MonadProgram Trans where
   getProgram = gets tsProgram

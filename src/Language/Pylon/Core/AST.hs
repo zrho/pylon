@@ -26,11 +26,13 @@ import Data.Function            (on)
 import Data.Foldable            (Foldable, fold)
 import Data.Traversable         (Traversable)
 import qualified Data.Set as S
+
 --------------------------------------------------------------------------------
 -- Top Level
 --------------------------------------------------------------------------------
 
 type Name = String
+type Ann  = String
 
 -- | Pylon Core program. Consists of expression bindings and data constructors.
 data Program = Program
@@ -69,6 +71,7 @@ data Exp
   | ELocal Index
   | EFree  Ident
   | EHole  Hole
+  | EAnn   Ann Exp
   deriving (Eq, Show, Data, Typeable)
 
 -- | Types are expressions.

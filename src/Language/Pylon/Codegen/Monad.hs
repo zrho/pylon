@@ -34,11 +34,11 @@ data CodegenState = CodegenState
   , cgTop   :: [Codegen ()]
   }
 
-instance MonadName [Char] Codegen where
-  freshName = do
-    n <- gets cgNames
-    modify $ \s -> s { cgNames = n + 1 }
-    return $ "_stg_" ++ show n
+freshName :: Codegen String
+freshName = do
+  n <- gets cgNames
+  modify $ \s -> s { cgNames = n + 1 }
+  return $ "_stg_" ++ show n
 
 -------------------------------------------------------------------------------
 

@@ -8,14 +8,6 @@ import Control.Concurrent.Supply
 
 --------------------------------------------------------------------------------
 
-class Monad m => MonadName n m | m -> n where
-  freshName :: m n
-
-freshNames :: MonadName n m => Int -> m [n]
-freshNames n = replicateM n freshName
-
---------------------------------------------------------------------------------
-
 class Monad m => MonadSupply m where
   getSupply :: m Supply
   putSupply :: Supply -> m ()

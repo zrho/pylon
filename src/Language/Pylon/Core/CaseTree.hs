@@ -94,8 +94,11 @@ instance MonadSupply CT where
   getSupply   = gets ctNames
   putSupply s = modify $ \st -> st { ctNames = s }
 
-instance MonadName Ident CT where
-  freshName = IGen "CaseTree" <$> supplyId
+freshName :: CT Ident
+freshName = IGen "CaseTree" <$> supplyId
+
+freshNames :: Int -> CT [Ident]
+freshNames n = replicateM n freshName
 
 runCT :: (MonadError String m, MonadProgram m) => Supply -> CT a -> m a
 runCT sp go = do
